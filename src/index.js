@@ -16,9 +16,9 @@ console.log('JWT_SECRET loaded:', !!process.env.JWT_SECRET);
 console.log('DATABASE_URL loaded:', !!process.env.DATABASE_URL);
 console.log('-------------------------');
 
-// Middleware
 const allowedOrigins = new Set([
     'https://rentix-front.vercel.app',
+    'https://cruisecabfront.vercel.app',
     'https://rentix.codebraze.com',
     'https://rentix-front-nozdp00ef-codebrazes-projects.vercel.app',
     'http://localhost:5173',
