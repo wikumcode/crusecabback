@@ -1,0 +1,29 @@
+Environment variables loaded from .env
+Running seed command `node prisma/seed.js` ...
+PrismaClientInitializationError: 
+Invalid `prisma.user.findUnique()` invocation in
+D:\App\Rentix\server\prisma\seed.js:12:44
+
+   9 const name = 'Super Admin';
+  10 const role = 'ADMIN';
+  11 
+→ 12 const existingUser = await prisma.user.findUnique(
+error: Error validating datasource `db`: the URL must start with the protocol `mongo`.
+  -->  schema.prisma:7
+   | 
+ 6 |   provider = "mongodb"
+ 7 |   url      = env("DATABASE_URL")
+   | 
+
+Validation Error Count: 1
+    at $n.handleRequestError (D:\App\Rentix\server\node_modules\@prisma\client\runtime\library.js:121:7615)
+    at $n.handleAndLogRequestError (D:\App\Rentix\server\node_modules\@prisma\client\runtime\library.js:121:6623)
+    at $n.request (D:\App\Rentix\server\node_modules\@prisma\client\runtime\library.js:121:6307)
+    at async l (D:\App\Rentix\server\node_modules\@prisma\client\runtime\library.js:130:9633)
+    at async main (D:\App\Rentix\server\prisma\seed.js:12:26) {
+  clientVersion: '5.22.0',
+  errorCode: undefined
+}
+
+An error occurred while running the seed command:
+Error: Command failed with exit code 1: node prisma/seed.js

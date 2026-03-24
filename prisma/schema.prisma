@@ -1,0 +1,683 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-1.0.x", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  email     String   @unique
+  password  String?
+  name      String
+  role      String   @default("CUSTOMER") // ADMIN, STAFF, DRIVER, CUSTOMER
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // bookings  Booking[] // Moved to Client model
+  driverDetails DriverDetails?
+
+  permissionGroupId String?          @db.ObjectId
+  permissionGroup   PermissionGroup? @relation(fields: [permissionGroupId], references: [id])
+  
+  vendorVehicles    Vehicle[]      @relation("VendorVehicles")
+  vendorDetails     VendorDetails?
+  vendorBills       VendorBill[]   @relation("VendorBills")
+}
+
+model VendorDetails {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String   @unique @db.ObjectId
+  user           User     @relation(fields: [userId], references: [id])
+  
+  phone          String?
+  address        String?
+  nic            String?
+  
+  nicFrontUrl    String?
+  nicBackUrl     String?
+  
+  utilityBillUrl String?
+  attachment1Url String?
+  attachment2Url String?
+  
+  vendorCode     String?  @unique // VEN/00001
+  photoUrl       String?
+
+  vendorType     String? // "VEHICLE_OWNER", "SERVICE_VENDOR"
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model PermissionGroup {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String   @unique
+  permissions String   // JSON string of permission codes
+  users       User[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Client {
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  code                String   @unique // CUS/00001
+  type                String   // LOCAL, FOREIGN, CORPORATE
+  status              String   @default("DRAFT") // DRAFT, PENDING_APPROVAL, CONFIRMED
+  
+  // Common Fields
+  email               String   @unique
+  phone               String?
+  mobile              String?
+  address             String?
+  
+  // Local/Foreign Fields
+  name                String?
+  nicOrPassport       String?  // Local
+  passportNo          String?  // Foreign
+  
+  // Corporate Fields
+  companyName         String?
+  brNumber            String?
+  contactPersonName   String?
+  contactPersonMobile String?
+
+  // Relations (Local)
+  closeRelationName   String?
+  closeRelationMobile String?
+  
+  // Documents (URLs)
+  doc1Url             String?
+  doc2Url             String?
+  utilityBillUrl      String?
+  support1Url         String?
+  support2Url         String?
+  
+  // Foreign Documents (URLs)
+  intlDrivingLicenseFrontUrl String?
+  intlDrivingLicenseBackUrl  String?
+  aaPermitUrl                String?
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  loyaltyPoints       Float    @default(0)
+  loyaltyEnabled      Boolean  @default(true)
+  loyaltyEarnRate   Float?
+  loyaltyRedeemRate Float?
+
+
+  bookings            Booking[]
+  contracts           Contract[]
+  invoices            Invoice[]
+  ledgerEntries       LedgerEntry[]
+  quotations          Quotation[]
+}
+
+model DriverDetails {
+  id             String @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String @unique @db.ObjectId
+  user           User   @relation(fields: [userId], references: [id])
+  licenseNumber  String
+  licenseExpiryDate DateTime?
+  phoneNumber    String?
+  address        String?
+  nic            String? 
+
+  licenseFrontUrl String?
+  licenseBackUrl  String?
+  nicFrontUrl     String?
+  nicBackUrl      String?
+  driverImageUrl  String?
+
+  status         String @default("ACTIVE") // ACTIVE, ON_LEAVE
+  createdAt      DateTime @default(now())
+}
+
+model VehicleBrand {
+  id        String         @id @default(auto()) @map("_id") @db.ObjectId
+  name      String         @unique
+  models    VehicleModel[]
+}
+
+model VehicleModel {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  brandId   String   @db.ObjectId
+  brand     VehicleBrand @relation(fields: [brandId], references: [id])
+  vehicles  Vehicle[]
+  
+  @@unique([name, brandId])
+}
+
+model Vehicle {
+  id                    String        @id @default(auto()) @map("_id") @db.ObjectId
+  // Relation to Model (which links to Brand)
+  modelId               String?       @db.ObjectId
+  vehicleModel          VehicleModel? @relation(fields: [modelId], references: [id])
+  
+  year                  Int
+  licensePlate          String        
+  vin                   String?       
+  color                 String
+  fuelType              String        // Petrol, Diesel, Electric, Hybrid
+  transmission          String        // Automatic, Manual
+  
+  // New Fields
+  lastOdometer          Int?
+  licenseFrontUrl       String?
+  licenseBackUrl        String?
+  licenseRenewalDate    DateTime?
+  insuranceFrontUrl     String?
+  insuranceBackUrl      String?
+  additionalImages      String? // JSON string for extra 4 images
+  insuranceRenewalDate  DateTime?
+  financeInstallmentDate DateTime?
+
+  // New Fields
+  ownership     String        @default("COMPANY") // COMPANY, THIRD_PARTY
+  rentalType    String?       @default("SHORT_TERM") // SHORT_TERM, LONG_TERM
+  vendorId      String?       @db.ObjectId
+  vendor        User?         @relation("VendorVehicles", fields: [vendorId], references: [id])
+
+  status        String        @default("AVAILABLE") // AVAILABLE, RENTED, MAINTENANCE, RESERVED
+  imageUrl      String?
+  features      String?       // "GPS,Bluetooth,Sunroof"
+  
+  dailyRentalRate Float?    @default(0)
+  foreignDailyRentalRate Float? @default(0)
+  bookingFee      Float?    @default(0)
+  dailyAllocatedKm Int?       @default(100)
+  extraKmCharge   Float?    @default(0)
+  
+  contractStartDate     DateTime?
+  contractEndDate       DateTime?
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  bookings      Booking[]
+  contracts     Contract[]
+  invoices      Invoice[]
+  ledgerEntries LedgerEntry[]
+  quotations    Quotation[]
+  maintenances  Maintenance[]
+  inspections   Inspection[]
+  exchangesAsOld VehicleExchange[] @relation("OldVehicle")
+  exchangesAsNew VehicleExchange[] @relation("NewVehicle")
+  odometers     Odometer[]
+  expenses      VehicleExpense[]
+  paymentSchedules VehiclePaymentSchedule[]
+  vendorBills   VendorBill[]
+}
+
+model Odometer {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId String   @db.ObjectId
+  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id])
+  date      DateTime @default(now())
+  reading   Int
+  source    String? // "MANUAL", "VEHICLE_UPDATE", "CONTRACT_END"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Booking {
+  id            String        @id @default(auto()) @map("_id") @db.ObjectId
+  clientId      String        @db.ObjectId
+  client        Client        @relation(fields: [clientId], references: [id])
+  vehicleId     String        @db.ObjectId
+  vehicle       Vehicle       @relation(fields: [vehicleId], references: [id])
+  startDate     DateTime
+  endDate       DateTime
+  totalAmount   Float
+  status        String        @default("PENDING") // PENDING, CONFIRMED, COMPLETED, CANCELLED
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  payments      Payment[]
+  rentalAgreement RentalAgreement?
+}
+
+model Maintenance {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId   String   @db.ObjectId
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  description String
+  cost        Float?   // Optional until status is DONE
+  startDate   DateTime
+  endDate     DateTime? // Optional until status is DONE
+  status      String    @default("PENDING") // PENDING, IN_PROGRESS, DONE
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  paidByCompany Boolean @default(false)
+  vendorBillId  String? @db.ObjectId
+  vendorBill    VendorBill? @relation(fields: [vendorBillId], references: [id])
+  isRealized    Boolean @default(false)
+}
+
+model VehicleExpense {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId   String   @db.ObjectId
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  description String
+  amount      Float
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  paidByCompany Boolean @default(false)
+  vendorBillId  String? @db.ObjectId
+  vendorBill    VendorBill? @relation(fields: [vendorBillId], references: [id])
+  isRealized    Boolean @default(false)
+}
+
+model Inspection {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId   String   @db.ObjectId
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  date        DateTime
+  notes       String?
+  passed      Boolean
+  reportUrl   String?
+}
+
+model Payment {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  bookingId   String   @db.ObjectId
+  booking     Booking  @relation(fields: [bookingId], references: [id])
+  amount      Float
+  method      String   // CREDIT_CARD, CASH, TRANSFER
+  status      String   // PAID, PENDING, FAILED
+  date        DateTime @default(now())
+}
+
+model RentalAgreement {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  bookingId   String   @unique @db.ObjectId
+  booking     Booking  @relation(fields: [bookingId], references: [id])
+  termsAndConditions String
+  signedAt    DateTime?
+}
+
+model Quotation {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  quotationNo String @unique @map("quotation_no")
+  issueDate   DateTime @default(now()) @map("issue_date")
+  validUntil  DateTime @map("valid_until")
+
+  customerMode String @map("customer_mode") // EXISTING, NEW
+  customerId   String? @db.ObjectId @map("customer_id")
+  customer     Client? @relation(fields: [customerId], references: [id])
+  customerName String @map("customer_name")
+  customerEmail String? @map("customer_email")
+  customerType String @map("customer_type") // LOCAL, FOREIGN, CORPORATE
+
+  vehicleId String @db.ObjectId @map("vehicle_id")
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+
+  pickupDate DateTime @map("pickup_date")
+  dropoffDate DateTime @map("dropoff_date")
+  rentalDays Int @map("rental_days")
+  dailyRate  Float @map("daily_rate")
+
+  baseAmount  Float @map("base_amount")
+  extraChargesJson String @map("extra_charges_json") // JSON string [{description, amount}]
+  extraAmount Float @map("extra_amount")
+  totalAmount Float @map("total_amount")
+
+  createdByUserId String? @db.ObjectId @map("created_by_user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+}
+
+model SystemSetting {
+  id    String @id @default(auto()) @map("_id") @db.ObjectId
+  key   String @unique
+  value String
+}
+
+model EmailSettings {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  smtpHost   String @map("smtp_host")
+  smtpPort   Int @map("smtp_port")
+  username   String
+  password   String
+  encryption String @map("encryption") // TLS/SSL/NONE
+
+  fromEmail String @map("from_email")
+  fromName  String @map("from_name")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("email_settings")
+}
+
+model EmailLog {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  toEmail      String @map("to_email")
+  subject      String
+  status       String // success/failed
+  errorMessage String? @map("error_message")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("email_logs")
+}
+
+model EmailTemplate {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+
+  templateKey     String @unique @map("template_key")
+  subjectTemplate String @map("subject_template")
+  htmlTemplate    String @map("html_template")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("email_templates")
+}
+
+model District {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String   @unique
+  cities    City[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model City {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  name       String
+  districtId String   @db.ObjectId
+  district   District @relation(fields: [districtId], references: [id])
+  contracts  Contract[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  @@unique([name, districtId])
+}
+
+model Contract {
+  id                 String   @id @default(auto()) @map("_id") @db.ObjectId
+  contractNo         String?  @unique
+  
+  // Relations
+  customerId         String   @db.ObjectId
+  customer           Client   @relation(fields: [customerId], references: [id])
+  vehicleId          String   @db.ObjectId
+  vehicle            Vehicle  @relation(fields: [vehicleId], references: [id])
+  invoices           Invoice[]
+  ledgerEntries      LedgerEntry[]
+  
+  // Status
+  status             String   @default("UPCOMING") // UPCOMING, IN_PROGRESS, RETURN, COMPLETED, CANCELLED
+  
+  // Dates & Time
+  pickupDate         DateTime
+  pickupTime         String
+  dropoffDate        DateTime
+  dropoffTime        String 
+  actualReturnDate   DateTime?
+  actualReturnTime   String?
+
+  // Financials
+  appliedDailyRate   Float?
+  securityDeposit    Float
+  deliveryCharge     Float? @default(0)
+  dailyKmLimit       Int      @default(100)
+  allocatedKm        Int      @default(100)
+  extraMileageCharge Float  @default(0)
+  extraKmCost        Float? @default(0)
+  securityDepositReturned Float? @default(0)
+
+  // Additional charges on return (consumed from security deposit)
+  damageCharge       Float?   @default(0)
+  otherChargeAmount  Float?   @default(0)
+  otherChargeDescription String?
+  
+  // Delivery
+  isDelivery         Boolean  @default(false)
+  cityId             String?  @db.ObjectId
+  city               City?    @relation(fields: [cityId], references: [id])
+  isCollection       Boolean  @default(false)
+  collectionCharge   Float? @default(0)
+  
+  // Vehicle State
+  fuelLevel          String // FULL, HALF, LOW
+  startOdometer      Int
+  endOdometer        Int?
+  
+  // Checklist (Booleans)
+  license            Boolean  @default(false)
+  insurance          Boolean  @default(false)
+  carpets            Boolean  @default(false)
+  spareWheel         Boolean  @default(false)
+  jack               Boolean  @default(false)
+  jackHandle         Boolean  @default(false)
+  airPump            Boolean  @default(false)
+  audioSetup         Boolean  @default(false)
+  toolCover          Boolean  @default(false)
+  mudCovers          Boolean  @default(false)
+
+  // Return Checklist (Booleans)
+  returnLicense      Boolean  @default(false)
+  returnInsurance    Boolean  @default(false)
+  returnCarpets      Boolean  @default(false)
+  returnSpareWheel   Boolean  @default(false)
+  returnJack         Boolean  @default(false)
+  returnJackHandle   Boolean  @default(false)
+  returnAirPump      Boolean  @default(false)
+  returnAudioSetup   Boolean  @default(false)
+  returnToolCover    Boolean  @default(false)
+  returnMudCovers    Boolean  @default(false)
+
+  // Checklist Strings/Other
+  batteryCode        String?
+  remark             String?
+
+  // Tyres
+  frontTyres         String // 100%, 80%, 60%, 40%
+  rearTyres          String
+  returnFrontTyres   String?
+  returnRearTyres    String?
+
+  // Images
+  inspectionImages   String? // JSON string for 5 images
+  returnInspectionImages String? // JSON string for 5 images generated at return
+  
+  // Return Strings
+  returnBatteryCode  String?
+  returnRemark       String?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  
+  vehicleExchanges   VehicleExchange[]
+}
+
+model Invoice {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+
+  // Sequencing / Identity
+  invoiceNo  String   @unique
+  sequence   Int      @unique
+
+  // Relations
+  contractId String   @db.ObjectId
+  contract   Contract @relation(fields: [contractId], references: [id])
+  customerId String   @db.ObjectId
+  customer   Client   @relation(fields: [customerId], references: [id])
+  vehicleId  String   @db.ObjectId
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+
+  // Type + amounts
+  type       String   // UPFRONT, FINAL, etc.
+  currency   String   @default("LKR")
+  subtotal   Float    @default(0)
+  total      Float    @default(0)
+  status     String   @default("ISSUED") // ISSUED, PAID, VOID
+  paidAt     DateTime?
+  paidMethod String?  // CASH, TRANSFER, CARD, etc.
+
+  // Line items snapshot
+  lines      Json
+  ledgerEntries LedgerEntry[]
+  creditNotes   CreditNote[]
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([contractId, type])
+}
+
+model LedgerEntry {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  type       String   // INCOME, LIABILITY
+  amount     Float
+  currency   String   @default("LKR")
+  description String?
+
+  invoiceId  String   @db.ObjectId
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id])
+
+  contractId String   @db.ObjectId
+  contract   Contract @relation(fields: [contractId], references: [id])
+  customerId String   @db.ObjectId
+  customer   Client   @relation(fields: [customerId], references: [id])
+  vehicleId  String   @db.ObjectId
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+
+  createdAt  DateTime @default(now())
+
+  @@index([vehicleId, createdAt])
+  @@index([type, createdAt])
+}
+
+model CreditNote {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  creditNoteNo String  @unique
+  sequence    Int      @unique
+
+  invoiceId   String   @db.ObjectId
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+
+  reason      String?
+  createdAt   DateTime @default(now())
+}
+
+model VehiclePaymentSchedule {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId String   @db.ObjectId
+  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id])
+  startDate DateTime
+  endDate   DateTime
+  monthlyAmount Float
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model VendorBill {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  billNumber      String?  @unique // Format: Vendor-Bill/00001
+  vendorId        String   @db.ObjectId
+  vendor          User     @relation("VendorBills", fields: [vendorId], references: [id])
+  vehicleId       String   @db.ObjectId
+  vehicle         Vehicle  @relation(fields: [vehicleId], references: [id])
+  month           Int
+  year            Int
+  billDate        DateTime? // Tracks the period month/year
+  monthlyPayment  Float
+  repairDeductions Float
+  expenseDeductions Float
+  totalAmount     Float    // Resulting payment to vendor
+  carriedOverBalance Float @default(0)
+  description     String?  // Deduction reasons
+  status          String   @default("PENDING") // PENDING, PAID
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items           VendorBillItem[]
+  maintenances    Maintenance[]
+  expenses        VehicleExpense[]
+}
+
+model VendorBillItem {
+  id           String     @id @default(auto()) @map("_id") @db.ObjectId
+  vendorBillId String     @db.ObjectId
+  vendorBill   VendorBill @relation(fields: [vendorBillId], references: [id], onDelete: Cascade)
+  description  String
+  amount       Float
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model VehicleExchange {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  
+  contractId String   @db.ObjectId
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  
+  oldVehicleId String  @db.ObjectId
+  oldVehicle   Vehicle @relation("OldVehicle", fields: [oldVehicleId], references: [id])
+  
+  newVehicleId String? @db.ObjectId
+  newVehicle   Vehicle? @relation("NewVehicle", fields: [newVehicleId], references: [id])
+  
+  exchangeDate DateTime @default(now())
+  
+  // Breakdown/Return details of Old Vehicle
+  oldVehicleReturnDate     DateTime
+  oldVehicleReturnOdometer Int
+  
+  // Handover details of New Vehicle
+  newVehicleStartDate     DateTime?
+  newVehicleStartOdometer Int?
+  newVehicleDailyRate     Float? // Snapshot of rate if category differs
+
+  // Checklist for Old Vehicle Return (Mirrors Return Checklist in Contract)
+  returnLicense      Boolean  @default(false)
+  returnInsurance    Boolean  @default(false)
+  returnCarpets      Boolean  @default(false)
+  returnSpareWheel   Boolean  @default(false)
+  returnJack         Boolean  @default(false)
+  returnJackHandle   Boolean  @default(false)
+  returnAirPump      Boolean  @default(false)
+  returnAudioSetup   Boolean  @default(false)
+  returnToolCover    Boolean  @default(false)
+  returnMudCovers    Boolean  @default(false)
+  returnRemark       String?
+  returnBatteryCode  String?
+  returnFrontTyres   String?
+  returnRearTyres    String?
+  returnInspectionImages String?
+
+  // Checklist for New Vehicle Handover (Mirrors Start Checklist in Contract)
+  license            Boolean  @default(false)
+  insurance          Boolean  @default(false)
+  carpets            Boolean  @default(false)
+  spareWheel         Boolean  @default(false)
+  jack               Boolean  @default(false)
+  jackHandle         Boolean  @default(false)
+  airPump            Boolean  @default(false)
+  audioSetup         Boolean  @default(false)
+  toolCover          Boolean  @default(false)
+  mudCovers          Boolean  @default(false)
+  remark             String?
+  batteryCode        String?
+  frontTyres         String?
+  rearTyres          String?
+  fuelLevel          String?  // FULL, HALF, LOW
+  inspectionImages   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

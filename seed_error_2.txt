@@ -1,0 +1,45 @@
+Environment variables loaded from .env
+Running seed command `node prisma/seed.js` ...
+PrismaClientKnownRequestError: 
+Invalid `prisma.user.findUnique()` invocation in
+D:\App\Rentix\server\prisma\seed.js:12:44
+
+   9 const name = 'Super Admin';
+  10 const role = 'ADMIN';
+  11 
+→ 12 const existingUser = await prisma.user.findUnique(
+Raw query failed. Code: `unknown`. Message: `Kind: Command failed: Error code 8000 (AtlasError): empty database name not allowed
+	at d315b0de673f2b2e0d53f7e7157b25ed/atlasproxy/session_proxy.go:720
+	at d315b0de673f2b2e0d53f7e7157b25ed/atlasproxy/session_proxy.go:1583
+	at d315b0de673f2b2e0d53f7e7157b25ed/atlasproxy/session_proxy.go:1190
+	at d315b0de673f2b2e0d53f7e7157b25ed/atlasproxy/session_proxy.go:1080
+	at 10gen/mongonet@v0.0.0-20260113205843-abe8b18a476f/proxy_session.go:398
+	at 10gen/mongonet@v0.0.0-20260113205843-abe8b18a476f/proxy_session.go:114
+	at 10gen/mongonet@v0.0.0-20260113205843-abe8b18a476f/session.go:274
+	at 10gen/mongonet@v0.0.0-20260113205843-abe8b18a476f/server.go:449
+	at src/runtime/asm_amd64.s:1700, labels: {}`
+    at $n.handleRequestError (D:\App\Rentix\server\node_modules\@prisma\client\runtime\library.js:121:7315)
+    at $n.handleAndLogRequestError (D:\App\Rentix\server\node_modules\@prisma\client\runtime\library.js:121:6623)
+    at $n.request (D:\App\Rentix\server\node_modules\@prisma\client\runtime\library.js:121:6307)
+    at async l (D:\App\Rentix\server\node_modules\@prisma\client\runtime\library.js:130:9633)
+    at async main (D:\App\Rentix\server\prisma\seed.js:12:26) {
+  code: 'P2010',
+  clientVersion: '5.22.0',
+  meta: {
+    modelName: 'User',
+    code: 'unknown',
+    message: 'Kind: Command failed: Error code 8000 (AtlasError): empty database name not allowed\n' +
+      '\tat d315b0de673f2b2e0d53f7e7157b25ed/atlasproxy/session_proxy.go:720\n' +
+      '\tat d315b0de673f2b2e0d53f7e7157b25ed/atlasproxy/session_proxy.go:1583\n' +
+      '\tat d315b0de673f2b2e0d53f7e7157b25ed/atlasproxy/session_proxy.go:1190\n' +
+      '\tat d315b0de673f2b2e0d53f7e7157b25ed/atlasproxy/session_proxy.go:1080\n' +
+      '\tat 10gen/mongonet@v0.0.0-20260113205843-abe8b18a476f/proxy_session.go:398\n' +
+      '\tat 10gen/mongonet@v0.0.0-20260113205843-abe8b18a476f/proxy_session.go:114\n' +
+      '\tat 10gen/mongonet@v0.0.0-20260113205843-abe8b18a476f/session.go:274\n' +
+      '\tat 10gen/mongonet@v0.0.0-20260113205843-abe8b18a476f/server.go:449\n' +
+      '\tat src/runtime/asm_amd64.s:1700, labels: {}'
+  }
+}
+
+An error occurred while running the seed command:
+Error: Command failed with exit code 1: node prisma/seed.js
