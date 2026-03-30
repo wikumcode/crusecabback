@@ -1,13 +1,7 @@
 const prisma = require('../lib/prisma');
 const { z } = require('zod');
-const fs = require('fs');
-const path = require('path');
+const cloudinary = require('../lib/cloudinary');
 const crypto = require('crypto');
-
-const uploadsDir = path.join(__dirname, '../../uploads');
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-}
 
 function dataUrlToBuffer(dataUrl) {
     const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
@@ -33,15 +27,19 @@ async function persistImageField(value, prefix) {
     // Already a URL/path
     if (value.startsWith('/uploads/') || value.startsWith('http://') || value.startsWith('https://')) return value;
 
-    // Convert base64 data URL to an uploaded file
+    // Convert base64 data URL to an uploaded file on Cloudinary
     if (value.startsWith('data:')) {
-        const parsed = dataUrlToBuffer(value);
-        if (!parsed) return null;
-        const ext = mimeToExt(parsed.mime);
-        const filename = `${prefix}-${crypto.randomUUID()}.${ext}`;
-        const filePath = path.join(uploadsDir, filename);
-        await fs.promises.writeFile(filePath, parsed.buffer);
-        return `/uploads/${filename}`;
+        try {
+            const result = await cloudinary.uploader.upload(value, {
+                folder: 'rentix-vehicles',
+                public_id: `${prefix}-${crypto.randomUUID()}`,
+                resource_type: 'auto'
+            });
+            return result.secure_url;
+        } catch (error) {
+            console.error('Cloudinary Upload Error (Vehicle):', error);
+            return null;
+        }
     }
 
     // Very large strings are most likely base64 blobs; drop them for safety.
