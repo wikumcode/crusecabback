@@ -81,7 +81,7 @@ exports.updateEmailSettings = async (req, res) => {
 
 exports.testConnection = async (req, res) => {
   try {
-    const result = await testSmtpConnection();
+    const result = await testSmtpConnection(req.body);
     if (result.ok) return res.json({ ok: true, message: result.message });
     return res.status(400).json({ ok: false, message: result.message });
   } catch (error) {

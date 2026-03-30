@@ -100,14 +100,39 @@ async function sendTemplateEmail(templateKey, to, variables = {}) {
   return sendEmail(to, subject, html);
 }
 
-async function testSmtpConnection() {
-  const settings = await getEmailSettingsOrThrow();
+async function testSmtpConnection(providedSettings) {
+  let settings;
+  
+  if (providedSettings && (providedSettings.smtp_host || providedSettings.smtpHost)) {
+    // Use provided settings (mapping from snake_case if necessary)
+    const existing = await prisma.emailSettings.findFirst();
+    settings = {
+      smtpHost: providedSettings.smtp_host || providedSettings.smtpHost,
+      smtpPort: providedSettings.smtp_port || providedSettings.smtpPort,
+      username: providedSettings.username,
+      password: providedSettings.password || existing?.password,
+      encryption: providedSettings.encryption
+    };
+
+    if (!settings.password) {
+      return { ok: false, message: 'SMTP password is required for testing.' };
+    }
+  } else {
+    // Fallback to saved settings
+    settings = await getEmailSettingsOrThrow();
+  }
+
   const transporter = buildTransportFromSettings(settings);
   try {
-    const result = await transporter.verify();
-    return { ok: true, message: result && result.message ? result.message : 'SMTP connection verified.' };
+    await transporter.verify();
+    return { ok: true, message: 'SMTP connection verified successfully.' };
   } catch (err) {
-    return { ok: false, message: err?.message || String(err) };
+    let msg = err?.message || String(err);
+    // Provide better guidance for Gmail authentication errors
+    if (msg.includes('Invalid login') || msg.includes('authentication failed')) {
+      msg += '. (Tip: For Gmail, ensure you use your full email as username and an App Password.)';
+    }
+    return { ok: false, message: msg };
   }
 }
 
