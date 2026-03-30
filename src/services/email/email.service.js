@@ -107,13 +107,16 @@ async function testSmtpConnection(providedSettings) {
   
   if (providedSettings && (providedSettings.smtp_host || providedSettings.smtpHost)) {
     const existing = await prisma.emailSettings.findFirst();
+    const passwordSource = (providedSettings.password && providedSettings.password.trim() !== '') ? 'PROVIDED' : 'EXISTING';
     settings = {
       smtpHost: providedSettings.smtp_host || providedSettings.smtpHost,
       smtpPort: providedSettings.smtp_port || providedSettings.smtpPort,
       username: providedSettings.username,
-      password: providedSettings.password || existing?.password,
+      password: (passwordSource === 'PROVIDED') ? providedSettings.password : existing?.password,
       encryption: providedSettings.encryption
     };
+
+    console.log(`[SMTP Test] Using ${passwordSource} password.`);
 
     if (!settings.password) {
       return { ok: false, message: 'SMTP password is required for testing.' };
