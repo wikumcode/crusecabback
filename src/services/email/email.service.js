@@ -24,6 +24,8 @@ function buildTransportFromSettings(settings) {
       user: settings.username,
       pass: settings.password
     },
+    connectionTimeout: 10000, // 10 seconds
+    greetingTimeout: 10000,   // 10 seconds
     ...(requireTLS ? { requireTLS: true } : {})
   });
 }
