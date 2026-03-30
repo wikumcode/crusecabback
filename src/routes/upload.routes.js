@@ -10,14 +10,17 @@ if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, uploadDir);
+const cloudinary = require('../lib/cloudinary');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+
+// Configure Cloudinary storage
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'rentix-uploads',
+        allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
+        resource_type: 'auto',
     },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-    }
 });
 
 const upload = multer({ storage: storage });
@@ -29,9 +32,8 @@ router.post('/', upload.single('file'), (req, res) => {
             return res.status(400).json({ message: 'No file uploaded' });
         }
 
-        // Return the accessible URL path
-        // For a local setup, the base URL would be the server origin + /uploads/ + filename
-        const fileUrl = `/uploads/${req.file.filename}`;
+        // Return the secure Cloudinary URL
+        const fileUrl = req.file.path || req.file.secure_url;
 
         res.status(200).json({
             message: 'File uploaded successfully',
