@@ -321,6 +321,7 @@ exports.deleteVehicle = async (req, res) => {
         await prisma.vehicle.delete({ where: { id } });
         res.json({ message: 'Vehicle deleted successfully' });
     } catch (error) {
-        res.status(500).json({ message: 'Failed to delete vehicle' });
+        console.error('Delete Vehicle Error:', error);
+        res.status(500).json({ message: 'Failed to delete vehicle', error: error.message });
     }
 };

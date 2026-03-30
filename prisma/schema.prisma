@@ -217,7 +217,7 @@ model Vehicle {
 model Odometer {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   vehicleId String   @db.ObjectId
-  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id])
+  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   date      DateTime @default(now())
   reading   Int
   source    String? // "MANUAL", "VEHICLE_UPDATE", "CONTRACT_END"
@@ -230,7 +230,7 @@ model Booking {
   clientId      String        @db.ObjectId
   client        Client        @relation(fields: [clientId], references: [id])
   vehicleId     String        @db.ObjectId
-  vehicle       Vehicle       @relation(fields: [vehicleId], references: [id])
+  vehicle       Vehicle       @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   startDate     DateTime
   endDate       DateTime
   totalAmount   Float
@@ -245,7 +245,7 @@ model Booking {
 model Maintenance {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   vehicleId   String   @db.ObjectId
-  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   description String
   cost        Float?   // Optional until status is DONE
   startDate   DateTime
@@ -263,7 +263,7 @@ model Maintenance {
 model VehicleExpense {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   vehicleId   String   @db.ObjectId
-  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   description String
   amount      Float
   date        DateTime
@@ -279,7 +279,7 @@ model VehicleExpense {
 model Inspection {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   vehicleId   String   @db.ObjectId
-  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   date        DateTime
   notes       String?
   passed      Boolean
@@ -289,7 +289,7 @@ model Inspection {
 model Payment {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   bookingId   String   @db.ObjectId
-  booking     Booking  @relation(fields: [bookingId], references: [id])
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   amount      Float
   method      String   // CREDIT_CARD, CASH, TRANSFER
   status      String   // PAID, PENDING, FAILED
@@ -319,7 +319,7 @@ model Quotation {
   customerType String @map("customer_type") // LOCAL, FOREIGN, CORPORATE
 
   vehicleId String @db.ObjectId @map("vehicle_id")
-  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
 
   pickupDate DateTime @map("pickup_date")
   dropoffDate DateTime @map("dropoff_date")
@@ -413,7 +413,7 @@ model Contract {
   customerId         String   @db.ObjectId
   customer           Client   @relation(fields: [customerId], references: [id])
   vehicleId          String   @db.ObjectId
-  vehicle            Vehicle  @relation(fields: [vehicleId], references: [id])
+  vehicle            Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   invoices           Invoice[]
   ledgerEntries      LedgerEntry[]
   
@@ -516,7 +516,7 @@ model Invoice {
   customerId String   @db.ObjectId
   customer   Client   @relation(fields: [customerId], references: [id])
   vehicleId  String   @db.ObjectId
-  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
 
   // Type + amounts
   type       String   // UPFRONT, FINAL, etc.
@@ -553,7 +553,7 @@ model LedgerEntry {
   customerId String   @db.ObjectId
   customer   Client   @relation(fields: [customerId], references: [id])
   vehicleId  String   @db.ObjectId
-  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id])
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
 
   createdAt  DateTime @default(now())
 
@@ -576,7 +576,7 @@ model CreditNote {
 model VehiclePaymentSchedule {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   vehicleId String   @db.ObjectId
-  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id])
+  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   startDate DateTime
   endDate   DateTime
   monthlyAmount Float
@@ -591,7 +591,7 @@ model VendorBill {
   vendorId        String   @db.ObjectId
   vendor          User     @relation("VendorBills", fields: [vendorId], references: [id])
   vehicleId       String   @db.ObjectId
-  vehicle         Vehicle  @relation(fields: [vehicleId], references: [id])
+  vehicle         Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   month           Int
   year            Int
   billDate        DateTime? // Tracks the period month/year
@@ -627,10 +627,10 @@ model VehicleExchange {
   contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
   
   oldVehicleId String  @db.ObjectId
-  oldVehicle   Vehicle @relation("OldVehicle", fields: [oldVehicleId], references: [id])
+  oldVehicle   Vehicle @relation("OldVehicle", fields: [oldVehicleId], references: [id], onDelete: Cascade)
   
   newVehicleId String? @db.ObjectId
-  newVehicle   Vehicle? @relation("NewVehicle", fields: [newVehicleId], references: [id])
+  newVehicle   Vehicle? @relation("NewVehicle", fields: [newVehicleId], references: [id], onDelete: Cascade)
   
   exchangeDate DateTime @default(now())
   
