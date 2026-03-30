@@ -104,7 +104,6 @@ async function testSmtpConnection(providedSettings) {
   let settings;
   
   if (providedSettings && (providedSettings.smtp_host || providedSettings.smtpHost)) {
-    // Use provided settings (mapping from snake_case if necessary)
     const existing = await prisma.emailSettings.findFirst();
     settings = {
       smtpHost: providedSettings.smtp_host || providedSettings.smtpHost,
@@ -118,20 +117,29 @@ async function testSmtpConnection(providedSettings) {
       return { ok: false, message: 'SMTP password is required for testing.' };
     }
   } else {
-    // Fallback to saved settings
     settings = await getEmailSettingsOrThrow();
   }
 
   const transporter = buildTransportFromSettings(settings);
   try {
+    console.log(`[SMTP Test] Attempting connection to ${settings.smtpHost}:${settings.smtpPort} as ${settings.username}...`);
     await transporter.verify();
     return { ok: true, message: 'SMTP connection verified successfully.' };
   } catch (err) {
+    console.error('[SMTP Test] Connection failed:', err);
     let msg = err?.message || String(err);
-    // Provide better guidance for Gmail authentication errors
+    
+    // Add a helpful checklist to the error message
+    const checklist = "\n\nDIAGNOSTIC CHECKLIST:\n1. Username must be your FULL email address.\n2. You must use a 16-character GOOGLE APP PASSWORD (not your regular password).\n3. Port 465 requires SSL encryption. Port 587 requires TLS/STARTTLS.";
+    
     if (msg.includes('Invalid login') || msg.includes('authentication failed')) {
-      msg += '. (Tip: For Gmail, ensure you use your full email as username and an App Password.)';
+      msg = `Authentication Failed: ${msg}${checklist}`;
+    } else if (msg.includes('ETIMEDOUT') || msg.includes('ECONNREFUSED')) {
+      msg = `Connection Timeout/Refused: ${msg}${checklist}`;
+    } else {
+      msg = `SMTP Error: ${msg}${checklist}`;
     }
+    
     return { ok: false, message: msg };
   }
 }
