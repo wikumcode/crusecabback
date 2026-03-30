@@ -17,8 +17,10 @@ console.log('DATABASE_URL loaded:', !!process.env.DATABASE_URL);
 console.log('-------------------------');
 
 const allowedOrigins = new Set([
+    'https://cruisecabs.rentix.lk', // Correct Production URL
+    'https://crusecabfront.vercel.app', // Resilient URL
+    'https://cruisecabfront.vercel.app', // Resilient URL
     'https://rentix-front.vercel.app',
-    'https://cruisecabfront.vercel.app',
     'https://rentix.codebraze.com',
     'https://rentix-front-nozdp00ef-codebrazes-projects.vercel.app',
     'http://localhost:5173',
