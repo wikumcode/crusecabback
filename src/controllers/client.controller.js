@@ -28,10 +28,13 @@ exports.createClient = async (req, res) => {
             }
         }
         const code = `CUS/${String(nextNumber).padStart(5, '0')}`;
+        
+        console.log("Creating client with data:", { code, type, status, email });
+
         const client = await prisma.client.create({
             data: {
                 code, type, status, 
-                email: (email && email.trim() !== "") ? email : null, 
+                email: (email && typeof email === 'string' && email.trim() !== "") ? email.trim() : null, 
                 phone, mobile, address,
                 name, nicOrPassport, passportNo, drivingLicenseNo,
                 companyName, brNumber, contactPersonName, contactPersonMobile,
@@ -54,14 +57,19 @@ exports.createClient = async (req, res) => {
         });
 
         // Send Welcome Email asynchronously
-        if (email) {
+        if (email && typeof email === 'string' && email.trim() !== "") {
             sendWelcomeEmail(email, name || companyName || 'Customer');
         }
 
         res.status(201).json(client);
     } catch (error) {
         console.error("Create Client Error:", error);
-        res.status(500).json({ message: "Failed to create customer", error: error.message });
+        // Include detailed error for debugging purposes (can be removed later)
+        res.status(500).json({ 
+            message: "Failed to create customer", 
+            error: error.message,
+            prismaError: error.code // Prisma error codes like P2002
+        });
     }
 };
 
