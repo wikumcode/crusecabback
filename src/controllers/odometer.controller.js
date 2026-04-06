@@ -32,7 +32,14 @@ exports.getOdometersByVehicle = async (req, res) => {
         const odometers = await prisma.odometer.findMany({
             where: { vehicleId },
             orderBy: { date: 'desc' },
-            include: { vehicle: true }
+            include: { 
+                vehicle: {
+                    include: {
+                        vehicleModel: { include: { brand: true } },
+                        fleetCategory: true
+                    }
+                }
+            }
         });
         res.json(odometers);
     } catch (error) {
@@ -45,7 +52,14 @@ exports.getAllOdometers = async (req, res) => {
     try {
         const odometers = await prisma.odometer.findMany({
             orderBy: { date: 'desc' },
-            include: { vehicle: true }
+            include: { 
+                vehicle: {
+                    include: {
+                        vehicleModel: { include: { brand: true } },
+                        fleetCategory: true
+                    }
+                }
+            }
         });
         res.json(odometers);
     } catch (error) {

@@ -221,7 +221,10 @@ exports.getVehicles = async (req, res) => {
         const vehicles = await prisma.vehicle.findMany({
             where,
             orderBy: { createdAt: 'desc' },
-            include: { vehicleModel: { include: { brand: true } } }
+            include: { 
+                vehicleModel: { include: { brand: true } },
+                fleetCategory: true
+            }
         });
 
         // IMPORTANT:
@@ -262,7 +265,8 @@ exports.getVehicle = async (req, res) => {
             include: {
                 vehicleModel: {
                     include: { brand: true }
-                }
+                },
+                fleetCategory: true
             }
         });
         if (!vehicle) return res.status(404).json({ message: 'Vehicle not found' });
