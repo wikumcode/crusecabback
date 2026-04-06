@@ -77,6 +77,7 @@ async function persistVehicleImages(rest, licensePlate) {
 
 const vehicleBaseSchema = z.object({
     modelId: z.preprocess((val) => (val === '' ? null : val), z.string().nullable().optional()), // Links to VehicleModel
+    fleetCategoryId: z.preprocess((val) => (val === '' ? null : val), z.string().nullable().optional()),
     year: z.number().int().min(1900),
     licensePlate: z.string().min(1),
     vin: z.string().optional(),
@@ -131,13 +132,14 @@ const vehicleSchema = vehicleBaseSchema.refine(data => {
 
 exports.createVehicle = async (req, res) => {
     try {
-        const { modelId, vendorId, ...rest } = vehicleSchema.parse(req.body);
+        const { modelId, vendorId, fleetCategoryId, ...rest } = vehicleSchema.parse(req.body);
 
         const persistedRest = await persistVehicleImages(rest, rest.licensePlate);
         const data = {
             ...persistedRest,
             ...(modelId && { vehicleModel: { connect: { id: modelId } } }),
-            ...(vendorId && { vendor: { connect: { id: vendorId } } })
+            ...(vendorId && { vendor: { connect: { id: vendorId } } }),
+            ...(fleetCategoryId && { fleetCategory: { connect: { id: fleetCategoryId } } })
         };
 
         const vehicle = await prisma.vehicle.create({ data });
@@ -280,13 +282,14 @@ exports.updateVehicle = async (req, res) => {
     try {
         const { id } = req.params;
         const rawData = req.body;
-        const { modelId, vendorId, ...rest } = vehicleBaseSchema.partial().parse(rawData);
+        const { modelId, vendorId, fleetCategoryId, ...rest } = vehicleBaseSchema.partial().parse(rawData);
 
         const persistedRest = await persistVehicleImages(rest, rest.licensePlate);
         const data = {
             ...persistedRest,
             ...(modelId && { vehicleModel: { connect: { id: modelId } } }),
-            ...(vendorId && { vendor: { connect: { id: vendorId } } })
+            ...(vendorId && { vendor: { connect: { id: vendorId } } }),
+            ...(fleetCategoryId && { fleetCategory: { connect: { id: fleetCategoryId } } })
         };
 
         const vehicle = await prisma.vehicle.update({

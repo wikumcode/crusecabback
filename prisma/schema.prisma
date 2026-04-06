@@ -185,6 +185,9 @@ model Vehicle {
   rentalType    String?       @default("SHORT_TERM") // SHORT_TERM, LONG_TERM
   vendorId      String?       @db.ObjectId
   vendor        User?         @relation("VendorVehicles", fields: [vendorId], references: [id])
+  
+  fleetCategoryId String?      @db.ObjectId
+  fleetCategory   FleetCategory? @relation(fields: [fleetCategoryId], references: [id])
 
   status        String        @default("AVAILABLE") // AVAILABLE, RENTED, MAINTENANCE, RESERVED
   imageUrl      String?
@@ -215,6 +218,15 @@ model Vehicle {
   expenses      VehicleExpense[]
   paymentSchedules VehiclePaymentSchedule[]
   vendorBills   VendorBill[]
+}
+
+model FleetCategory {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  name      String    @unique
+  sortOrder Int       @default(0)
+  vehicles  Vehicle[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 }
 
 model Odometer {

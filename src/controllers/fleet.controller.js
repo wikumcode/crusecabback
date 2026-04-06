@@ -94,3 +94,57 @@ exports.deleteModel = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+// --- Categories ---
+exports.getCategories = async (req, res) => {
+    try {
+        const categories = await prisma.fleetCategory.findMany({
+            orderBy: { sortOrder: 'asc' }
+        });
+        res.json(categories);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.createCategory = async (req, res) => {
+    try {
+        const { name, sortOrder } = req.body;
+        const category = await prisma.fleetCategory.create({
+            data: { 
+                name, 
+                sortOrder: parseInt(sortOrder) || 0 
+            }
+        });
+        res.status(201).json(category);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.updateCategory = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, sortOrder } = req.body;
+        const category = await prisma.fleetCategory.update({
+            where: { id },
+            data: { 
+                name, 
+                sortOrder: parseInt(sortOrder) || 0 
+            }
+        });
+        res.json(category);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+exports.deleteCategory = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await prisma.fleetCategory.delete({ where: { id } });
+        res.json({ message: 'Category deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};

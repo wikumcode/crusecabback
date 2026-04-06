@@ -12,4 +12,10 @@ router.post('/models', fleetController.createModel);
 router.put('/models/:id', fleetController.updateModel);
 router.delete('/models/:id', fleetController.deleteModel);
 
+// Categories
+router.get('/categories', fleetController.getCategories);
+router.post('/categories', fleetController.createCategory);
+router.put('/categories/:id', fleetController.updateCategory);
+router.delete('/categories/:id', fleetController.deleteCategory);
+
 module.exports = router;
