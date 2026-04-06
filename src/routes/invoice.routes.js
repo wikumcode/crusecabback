@@ -11,6 +11,7 @@ router.post('/contract/:contractId/upfront', authenticateToken, authorizeRoles('
 router.post('/contract/:contractId/return', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.createReturnInvoiceForContract);
 // Customer share view (token-based) - used in outgoing invoice emails
 router.get('/share/:invoiceId', invoiceController.getSharedInvoice);
+router.get('/:id/share-link', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.getInvoiceShareLink);
 router.get('/:id', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.getInvoice);
 router.put('/:id/mark-paid', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.markInvoicePaid);
 router.post('/:id/credit-note', authenticateToken, authorizeRoles('ADMIN'), invoiceController.createCreditNote);

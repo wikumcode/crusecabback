@@ -311,6 +311,20 @@ exports.getSharedInvoice = async (req, res) => {
     }
 };
 
+exports.getInvoiceShareLink = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const invoice = await prisma.invoice.findUnique({ where: { id } });
+        if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
+
+        const shareUrl = buildInvoiceShareLink(req, invoice.id);
+        res.json({ shareUrl });
+    } catch (error) {
+        console.error('Get Invoice Share Link Error:', error);
+        res.status(500).json({ message: 'Failed to generate share link' });
+    }
+};
+
 exports.listInvoices = async (req, res) => {
     try {
         const invoices = await prisma.invoice.findMany({
