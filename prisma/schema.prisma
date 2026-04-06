@@ -69,7 +69,7 @@ model Client {
   status              String   @default("DRAFT") // DRAFT, PENDING_APPROVAL, CONFIRMED
   
   // Common Fields
-  email               String   @unique
+  email               String?  @unique
   phone               String?
   mobile              String?
   address             String?
@@ -78,6 +78,7 @@ model Client {
   name                String?
   nicOrPassport       String?  // Local
   passportNo          String?  // Foreign
+  drivingLicenseNo    String?
   
   // Corporate Fields
   companyName         String?
@@ -90,11 +91,13 @@ model Client {
   closeRelationMobile String?
   
   // Documents (URLs)
-  doc1Url             String?
-  doc2Url             String?
-  utilityBillUrl      String?
-  support1Url         String?
-  support2Url         String?
+  doc1Url                    String?
+  doc2Url                    String?
+  utilityBillUrl             String?
+  drivingLicenseFrontUrl     String?
+  drivingLicenseBackUrl      String?
+  support1Url                String?
+  support2Url                String?
   
   // Foreign Documents (URLs)
   intlDrivingLicenseFrontUrl String?

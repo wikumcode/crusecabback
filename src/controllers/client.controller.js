@@ -6,11 +6,12 @@ exports.createClient = async (req, res) => {
     try {
         const {
             type, status, email, phone, mobile, address,
-            name, nicOrPassport, passportNo,
+            name, nicOrPassport, passportNo, drivingLicenseNo,
             companyName, brNumber, contactPersonName, contactPersonMobile,
             closeRelationName, closeRelationMobile,
             intlDrivingLicenseFrontUrl, intlDrivingLicenseBackUrl, aaPermitUrl,
-            doc1Url, doc2Url, utilityBillUrl, support1Url, support2Url
+            doc1Url, doc2Url, utilityBillUrl, support1Url, support2Url,
+            drivingLicenseFrontUrl, drivingLicenseBackUrl
         } = req.body;
 
         // Generate Code: CUS/00001
@@ -29,8 +30,10 @@ exports.createClient = async (req, res) => {
         const code = `CUS/${String(nextNumber).padStart(5, '0')}`;
         const client = await prisma.client.create({
             data: {
-                code, type, status, email, phone, mobile, address,
-                name, nicOrPassport, passportNo,
+                code, type, status, 
+                email: (email && email.trim() !== "") ? email : null, 
+                phone, mobile, address,
+                name, nicOrPassport, passportNo, drivingLicenseNo,
                 companyName, brNumber, contactPersonName, contactPersonMobile,
                 closeRelationName, closeRelationMobile,
                 loyaltyPoints: parseFloat(req.body.loyaltyPoints) || 0,
@@ -44,7 +47,9 @@ exports.createClient = async (req, res) => {
                 doc2Url,
                 utilityBillUrl,
                 support1Url,
-                support2Url
+                support2Url,
+                drivingLicenseFrontUrl,
+                drivingLicenseBackUrl
             }
         });
 
@@ -78,6 +83,10 @@ exports.updateClient = async (req, res) => {
     try {
         const { id } = req.params;
         const updateData = { ...req.body };
+
+        if (updateData.email === "") {
+            updateData.email = null;
+        }
 
         if (updateData.loyaltyPoints !== undefined) {
             updateData.loyaltyPoints = parseFloat(updateData.loyaltyPoints) || 0;
