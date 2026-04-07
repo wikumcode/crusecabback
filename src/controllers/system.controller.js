@@ -1,5 +1,4 @@
 const prisma = require('../lib/prisma');
-
 const bcrypt = require('bcryptjs');
 
 const BRANDS = [
@@ -424,20 +423,36 @@ exports.removeDemoData = async (req, res) => {
 
 exports.wipeAllData = async (req, res) => {
     try {
-        console.log('Initiating full system data wipe...');
+        const { password } = req.body;
+        if (!password) return res.status(400).json({ message: 'Password is required' });
+
+        const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) return res.status(401).json({ message: 'Incorrect password. Wipe aborted.' });
+
+        console.log('Initiating full system data wipe by Super Admin...');
 
         // 1. Delete all transactional data
+        await prisma.ledgerEntry.deleteMany({});
+        await prisma.invoice.deleteMany({});
+        await prisma.creditNote.deleteMany({});
+        await prisma.vendorBillItem.deleteMany({});
+        await prisma.vendorBill.deleteMany({});
+        await prisma.vehiclePaymentSchedule.deleteMany({});
         await prisma.payment.deleteMany({});
+        
         await prisma.odometer.deleteMany({});
         await prisma.vehicleExchange.deleteMany({});
         await prisma.contract.deleteMany({});
         await prisma.booking.deleteMany({});
+        await prisma.quotation.deleteMany({});
         await prisma.maintenance.deleteMany({});
         await prisma.inspection.deleteMany({});
         await prisma.rentalAgreement.deleteMany({});
 
         // 2. Delete all inventory/customer data
         await prisma.vehicle.deleteMany({});
+        await prisma.fleetCategory.deleteMany({});
         await prisma.client.deleteMany({});
 
         // 3. Delete Profiles (Driver/Vendor)
@@ -455,12 +470,52 @@ exports.wipeAllData = async (req, res) => {
         await prisma.vehicleExpense.deleteMany({});
         await prisma.vehicleModel.deleteMany({});
         await prisma.vehicleBrand.deleteMany({});
+        await prisma.emailLog.deleteMany({});
 
-        const result = { message: 'System purged', usersDeleted: deletedUsers.count };
+        // 6. Reset Sequences
+        await prisma.systemSetting.deleteMany({
+            where: {
+                key: { contains: '_sequence' }
+            }
+        });
 
-        res.json({ message: 'All business data wiped successfully', result });
+        res.json({ message: 'System purged and sequences reset successfully', usersDeleted: deletedUsers.count });
     } catch (error) {
         console.error('System wipe error:', error);
         res.status(500).json({ error: 'Failed to wipe system data', details: error.message });
+    }
+};
+
+exports.getSequences = async (req, res) => {
+    try {
+        const sequences = await prisma.systemSetting.findMany({
+            where: {
+                key: { contains: '_sequence' }
+            }
+        });
+        res.json(sequences);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to fetch sequences' });
+    }
+};
+
+exports.updateSequence = async (req, res) => {
+    try {
+        const { key, value, password } = req.body;
+        if (!password) return res.status(400).json({ message: 'Password is required' });
+
+        const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) return res.status(401).json({ message: 'Incorrect password' });
+
+        const updated = await prisma.systemSetting.upsert({
+            where: { key },
+            update: { value: String(value) },
+            create: { key, value: String(value) }
+        });
+
+        res.json(updated);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to update sequence' });
     }
 };

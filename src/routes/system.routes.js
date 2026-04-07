@@ -5,6 +5,8 @@ const { authenticateToken, authorizeRoles } = require('../middleware/auth.middle
 
 router.post('/load-demo-data', authenticateToken, authorizeRoles('SUPER_ADMIN'), systemController.loadDemoData);
 router.delete('/remove-demo-data', authenticateToken, authorizeRoles('SUPER_ADMIN', 'ADMIN'), systemController.removeDemoData);
-router.delete('/wipe-all-data', authenticateToken, authorizeRoles('SUPER_ADMIN', 'ADMIN'), systemController.wipeAllData);
+router.delete('/wipe-all-data', authenticateToken, authorizeRoles('SUPER_ADMIN'), systemController.wipeAllData);
+router.get('/sequences', authenticateToken, authorizeRoles('SUPER_ADMIN'), systemController.getSequences);
+router.put('/sequences', authenticateToken, authorizeRoles('SUPER_ADMIN'), systemController.updateSequence);
 
 module.exports = router;
