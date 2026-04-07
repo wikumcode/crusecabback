@@ -488,13 +488,48 @@ exports.wipeAllData = async (req, res) => {
 
 exports.getSequences = async (req, res) => {
     try {
-        const sequences = await prisma.systemSetting.findMany({
+        const now = new Date();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const yyyy = String(now.getFullYear());
+        
+        // Define all core sequence keys that should exist in the system
+        const coreKeys = [
+            'invoice_sequence',
+            'credit_note_sequence',
+            'client_sequence',
+            'vendor_sequence',
+            'vendor_bill_sequence',
+            `contract_sequence_${yyyy}_${mm}`,
+            `quotation_sequence_${yyyy}_${mm}`
+        ];
+
+        // Fetch existing sequences from DB
+        const existingSequences = await prisma.systemSetting.findMany({
             where: {
                 key: { contains: '_sequence' }
             }
         });
-        res.json(sequences);
+
+        const existingKeys = existingSequences.map(s => s.key);
+        const results = [...existingSequences];
+
+        // For any core key that doesn't exist, provide a default '0' record
+        coreKeys.forEach(key => {
+            if (!existingKeys.includes(key)) {
+                results.push({
+                    key,
+                    value: '0',
+                    isDefault: true
+                });
+            }
+        });
+
+        // Ensure current month's contract/quotation sequences are sorted predictably
+        results.sort((a, b) => a.key.localeCompare(b.key));
+
+        res.json(results);
     } catch (error) {
+        console.error('Failed to fetch sequences:', error);
         res.status(500).json({ message: 'Failed to fetch sequences' });
     }
 };
