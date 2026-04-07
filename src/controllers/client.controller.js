@@ -14,19 +14,21 @@ exports.createClient = async (req, res) => {
             drivingLicenseFrontUrl, drivingLicenseBackUrl
         } = req.body;
 
-        // Generate Code: CUS/00001
-        const lastClient = await prisma.client.findFirst({
-            orderBy: { code: 'desc' },
-            select: { code: true }
+        // Generate Code: CUS/00001 via SystemSetting sequence
+        const sequenceRecord = await prisma.$transaction(async (tx) => {
+            let record = await tx.systemSetting.findUnique({ where: { key: 'client_sequence' } });
+            if (!record) {
+                return await tx.systemSetting.create({ data: { key: 'client_sequence', value: '1' } });
+            } else {
+                const nextVal = parseInt(record.value) + 1;
+                return await tx.systemSetting.update({
+                    where: { key: 'client_sequence' },
+                    data: { value: nextVal.toString() }
+                });
+            }
         });
 
-        let nextNumber = 1;
-        if (lastClient && lastClient.code) {
-            const lastNumber = parseInt(lastClient.code.split('/')[1]);
-            if (!isNaN(lastNumber)) {
-                nextNumber = lastNumber + 1;
-            }
-        }
+        const nextNumber = parseInt(sequenceRecord.value);
         const code = `CUS/${String(nextNumber).padStart(5, '0')}`;
         
         console.log("Creating client with data:", { code, type, status, email });

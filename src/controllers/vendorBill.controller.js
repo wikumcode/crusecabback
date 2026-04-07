@@ -135,18 +135,21 @@ function renderVendorBillHtml(bill, company) {
 }
 
 const generateBillNumber = async () => {
-    const lastBill = await prisma.vendorBill.findFirst({
-        where: { billNumber: { startsWith: 'Vendor-Bill/' } },
-        orderBy: { billNumber: 'desc' }
+    // Generate Code: Vendor-Bill/00001 via SystemSetting sequence
+    const sequenceRecord = await prisma.$transaction(async (tx) => {
+        let record = await tx.systemSetting.findUnique({ where: { key: 'vendor_bill_sequence' } });
+        if (!record) {
+            return await tx.systemSetting.create({ data: { key: 'vendor_bill_sequence', value: '1' } });
+        } else {
+            const nextVal = parseInt(record.value) + 1;
+            return await tx.systemSetting.update({
+                where: { key: 'vendor_bill_sequence' },
+                data: { value: nextVal.toString() }
+            });
+        }
     });
 
-    if (!lastBill || !lastBill.billNumber) {
-        return 'Vendor-Bill/00001';
-    }
-
-    const lastCode = lastBill.billNumber;
-    const numberPart = parseInt(lastCode.split('/')[1]);
-    const nextNumber = numberPart + 1;
+    const nextNumber = parseInt(sequenceRecord.value);
     return `Vendor-Bill/${String(nextNumber).padStart(5, '0')}`;
 };
 

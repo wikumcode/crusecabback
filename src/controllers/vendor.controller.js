@@ -30,18 +30,21 @@ exports.getVendors = async (req, res) => {
 };
 
 const generateVendorCode = async () => {
-    const lastVendor = await prisma.vendorDetails.findFirst({
-        orderBy: { createdAt: 'desc' },
-        where: { vendorCode: { not: null } }
+    // Generate Code: VEN/00001 via SystemSetting sequence
+    const sequenceRecord = await prisma.$transaction(async (tx) => {
+        let record = await tx.systemSetting.findUnique({ where: { key: 'vendor_sequence' } });
+        if (!record) {
+            return await tx.systemSetting.create({ data: { key: 'vendor_sequence', value: '1' } });
+        } else {
+            const nextVal = parseInt(record.value) + 1;
+            return await tx.systemSetting.update({
+                where: { key: 'vendor_sequence' },
+                data: { value: nextVal.toString() }
+            });
+        }
     });
 
-    if (!lastVendor || !lastVendor.vendorCode) {
-        return 'VEN/00001';
-    }
-
-    const lastCode = lastVendor.vendorCode;
-    const numberPart = parseInt(lastCode.split('/')[1]);
-    const nextNumber = numberPart + 1;
+    const nextNumber = parseInt(sequenceRecord.value);
     return `VEN/${String(nextNumber).padStart(5, '0')}`;
 };
 
