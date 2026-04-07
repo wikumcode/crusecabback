@@ -57,13 +57,14 @@ exports.getExpenseById = async (req, res) => {
 
 exports.createExpense = async (req, res) => {
     try {
-        const { vehicleId, description, amount, date } = req.body;
+        const { vehicleId, description, amount, date, paidByCompany } = req.body;
         const expense = await prisma.vehicleExpense.create({
             data: {
                 vehicleId,
                 description,
                 amount: parseFloat(amount),
-                date: new Date(date)
+                date: new Date(date),
+                paidByCompany: paidByCompany === true
             }
         });
         res.status(201).json(expense);
@@ -74,14 +75,15 @@ exports.createExpense = async (req, res) => {
 
 exports.updateExpense = async (req, res) => {
     try {
-        const { vehicleId, description, amount, date } = req.body;
+        const { vehicleId, description, amount, date, paidByCompany } = req.body;
         const updatedExpense = await prisma.vehicleExpense.update({
             where: { id: req.params.id },
             data: {
                 vehicleId,
                 description,
                 amount: parseFloat(amount),
-                date: new Date(date)
+                date: new Date(date),
+                paidByCompany: paidByCompany === true
             }
         });
         res.json(updatedExpense);
