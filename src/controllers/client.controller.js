@@ -185,3 +185,32 @@ exports.checkEmail = async (req, res) => {
         res.status(500).json({ message: "Error checking Email" });
     }
 };
+
+// Archive customer
+exports.archiveClient = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const client = await prisma.client.update({
+            where: { id },
+            data: { status: 'ARCHIVED' }
+        });
+        res.json({ message: "Customer archived successfully", client });
+    } catch (error) {
+        res.status(500).json({ message: "Failed to archive customer" });
+    }
+};
+
+// Unarchive customer
+exports.unarchiveClient = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const client = await prisma.client.update({
+            where: { id },
+            data: { status: status || 'CONFIRMED' }
+        });
+        res.json({ message: "Customer unarchived successfully", client });
+    } catch (error) {
+        res.status(500).json({ message: "Failed to unarchive customer" });
+    }
+};

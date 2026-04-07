@@ -14,4 +14,8 @@ router.get('/check-passport', clientController.checkPassport);
 router.get('/check-br', clientController.checkBr);
 router.get('/check-email', clientController.checkEmail);
 
+// Archiving
+router.post('/:id/archive', clientController.archiveClient);
+router.post('/:id/unarchive', clientController.unarchiveClient);
+
 module.exports = router;
