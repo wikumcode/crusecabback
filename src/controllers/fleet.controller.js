@@ -110,15 +110,19 @@ exports.getCategories = async (req, res) => {
 exports.createCategory = async (req, res) => {
     try {
         const { name, sortOrder } = req.body;
+        if (!name) {
+            return res.status(400).json({ error: 'Category name is required' });
+        }
         const category = await prisma.fleetCategory.create({
             data: { 
-                name, 
-                sortOrder: parseInt(sortOrder) || 0 
+                name: name.trim(), 
+                sortOrder: parseInt(sortOrder, 10) || 0 
             }
         });
         res.status(201).json(category);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('[FleetController] Failed to create category:', error);
+        res.status(500).json({ error: error.message || 'Internal server error while creating category' });
     }
 };
 
@@ -129,13 +133,14 @@ exports.updateCategory = async (req, res) => {
         const category = await prisma.fleetCategory.update({
             where: { id },
             data: { 
-                name, 
-                sortOrder: parseInt(sortOrder) || 0 
+                name: name?.trim(), 
+                sortOrder: parseInt(sortOrder, 10) || 0 
             }
         });
         res.json(category);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error(`[FleetController] Failed to update category ${req.params.id}:`, error);
+        res.status(500).json({ error: error.message || 'Internal server error while updating category' });
     }
 };
 
