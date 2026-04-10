@@ -12,6 +12,7 @@ router.post('/', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), vendorBill
 router.put('/:id', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), vendorBillController.updateVendorBill);
 router.post('/generate', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), vendorBillController.generateBills);
 router.put('/:id/status', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), vendorBillController.updateBillStatus);
+router.delete('/:id', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), vendorBillController.deleteVendorBill);
 router.get('/:id/share-link', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), vendorBillController.getVendorBillShareLink);
 
 module.exports = router;

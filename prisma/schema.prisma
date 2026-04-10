@@ -527,7 +527,7 @@ model Invoice {
 
   // Relations
   contractId String   @db.ObjectId
-  contract   Contract @relation(fields: [contractId], references: [id])
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
   customerId String   @db.ObjectId
   customer   Client   @relation(fields: [customerId], references: [id])
   vehicleId  String   @db.ObjectId
@@ -561,10 +561,10 @@ model LedgerEntry {
   description String?
 
   invoiceId  String   @db.ObjectId
-  invoice    Invoice  @relation(fields: [invoiceId], references: [id])
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   contractId String   @db.ObjectId
-  contract   Contract @relation(fields: [contractId], references: [id])
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
   customerId String   @db.ObjectId
   customer   Client   @relation(fields: [customerId], references: [id])
   vehicleId  String   @db.ObjectId
@@ -582,7 +582,7 @@ model CreditNote {
   sequence    Int      @unique
 
   invoiceId   String   @db.ObjectId
-  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   reason      String?
   createdAt   DateTime @default(now())

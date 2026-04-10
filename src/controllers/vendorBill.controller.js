@@ -349,6 +349,40 @@ exports.updateBillStatus = async (req, res) => {
     }
 };
 
+exports.deleteVendorBill = async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Find existing bill to handle relations
+        const bill = await prisma.vendorBill.findUnique({
+            where: { id },
+            include: { maintenances: true, expenses: true }
+        });
+
+        if (!bill) return res.status(404).json({ message: 'Bill not found' });
+
+        await prisma.$transaction([
+            // 1. Reset maintenance links
+            prisma.maintenance.updateMany({
+                where: { vendorBillId: id },
+                data: { vendorBillId: null, isRealized: false }
+            }),
+            // 2. Reset expense links
+            prisma.vehicleExpense.updateMany({
+                where: { vendorBillId: id },
+                data: { vendorBillId: null, isRealized: false }
+            }),
+            // 3. Delete the bill (VendorBillItem deleted by Cascade defined in schema)
+            prisma.vendorBill.delete({ where: { id } })
+        ]);
+
+        res.json({ message: 'Vendor bill deleted successfully' });
+    } catch (error) {
+        console.error("Delete Vendor Bill Error:", error);
+        res.status(500).json({ message: 'Failed to delete vendor bill' });
+    }
+};
+
 exports.getVendorBillShareLink = async (req, res) => {
     try {
         const { id } = req.params;
