@@ -38,9 +38,11 @@ exports.createClient = async (req, res) => {
                 code, type, status, 
                 email: (email && typeof email === 'string' && email.trim() !== "") ? email.trim() : null, 
                 phone, mobile, address,
+                description: (req.body.description && req.body.description.trim() !== "") ? req.body.description.trim() : null,
                 name, nicOrPassport, passportNo, drivingLicenseNo,
                 companyName, brNumber, contactPersonName, contactPersonMobile,
                 closeRelationName, closeRelationMobile,
+                userId: (req.body.userId && req.body.userId.trim() !== "") ? req.body.userId : null,
                 loyaltyPoints: parseFloat(req.body.loyaltyPoints) || 0,
                 loyaltyEnabled: req.body.loyaltyEnabled === 'true' || req.body.loyaltyEnabled === true,
                 loyaltyEarnRate: (req.body.loyaltyEarnRate && !isNaN(parseFloat(req.body.loyaltyEarnRate))) ? parseFloat(req.body.loyaltyEarnRate) : null,
@@ -66,11 +68,10 @@ exports.createClient = async (req, res) => {
         res.status(201).json(client);
     } catch (error) {
         console.error("Create Client Error:", error);
-        // Include detailed error for debugging purposes (can be removed later)
         res.status(500).json({ 
-            message: "Failed to create customer", 
+            message: "Failed to create customer: " + error.message, 
             error: error.message,
-            prismaError: error.code // Prisma error codes like P2002
+            prismaError: error.code 
         });
     }
 };
@@ -97,6 +98,12 @@ exports.updateClient = async (req, res) => {
         if (updateData.email === "") {
             updateData.email = null;
         }
+        if (updateData.userId === "") {
+            updateData.userId = null;
+        }
+        if (updateData.description === "") {
+            updateData.description = null;
+        }
 
         if (updateData.loyaltyPoints !== undefined) {
             updateData.loyaltyPoints = parseFloat(updateData.loyaltyPoints) || 0;
@@ -115,7 +122,11 @@ exports.updateClient = async (req, res) => {
         console.log("Update Client Success:", client);
         res.json(client);
     } catch (error) {
-        res.status(500).json({ message: "Failed to update customer" });
+        console.error("Update Client Error:", error);
+        res.status(500).json({ 
+            message: "Failed to update customer: " + error.message,
+            error: error.message
+        });
     }
 };
 

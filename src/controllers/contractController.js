@@ -174,27 +174,39 @@ exports.createContract = async (req, res) => {
             return res.status(400).json({ message: 'Customer is not confirmed' });
         }
 
-        // Check for Overlapping Bookings
-        const start = data.pickupDate;
-        const end = data.dropoffDate;
+        // Check for Overlapping Bookings (Minute-Precision)
+        const newStart = combineDateAndTime(data.pickupDate, data.pickupTime);
+        const newEnd = combineDateAndTime(data.dropoffDate, data.dropoffTime);
 
-        const overlaps = await prisma.contract.findFirst({
+        if (!newStart || !newEnd) {
+            return res.status(400).json({ message: 'Invalid pickup or dropoff date/time' });
+        }
+
+        const existingContracts = await prisma.contract.findMany({
             where: {
                 vehicleId: data.vehicleId,
                 status: { in: ['UPCOMING', 'IN_PROGRESS'] },
                 AND: [
-                    { pickupDate: { lte: end } },
-                    { dropoffDate: { gte: start } }
+                    { pickupDate: { lte: data.dropoffDate } },
+                    { dropoffDate: { gte: data.pickupDate } }
                 ]
             }
         });
 
-        if (overlaps) {
+        const overlap = existingContracts.find(c => {
+            const cStart = combineDateAndTime(c.pickupDate, c.pickupTime);
+            const cEnd = combineDateAndTime(c.dropoffDate, c.dropoffTime);
+            if (!cStart || !cEnd) return false;
+            // Strict overlap check: (NewStart < ExistingEnd) && (ExistingStart < NewEnd)
+            return (newStart < cEnd) && (cStart < newEnd);
+        });
+
+        if (overlap) {
             return res.status(400).json({
-                message: 'Vehicle is already booked for these dates',
+                message: 'This vehicle already have upcoming booking that date and time range, so please select another vehicle or select another date time range',
                 conflict: {
-                    start: overlaps.pickupDate,
-                    end: overlaps.dropoffDate
+                    start: combineDateAndTime(overlap.pickupDate, overlap.pickupTime),
+                    end: combineDateAndTime(overlap.dropoffDate, overlap.dropoffTime)
                 }
             });
         }
@@ -311,31 +323,48 @@ exports.updateContract = async (req, res) => {
         });
         const previousStatus = previousContract?.status;
 
-        // Check for Overlapping Bookings (if dates or vehicle changed)
-        if (data.pickupDate && data.dropoffDate && data.vehicleId) {
-            const start = data.pickupDate;
-            const end = data.dropoffDate;
+        // Check for Overlapping Bookings (Minute-Precision)
+        if (data.vehicleId || data.pickupDate || data.dropoffDate || data.pickupTime || data.dropoffTime) {
+            const currentContract = await prisma.contract.findUnique({ where: { id } });
+            
+            const vId = data.vehicleId || currentContract.vehicleId;
+            const pDay = data.pickupDate || currentContract.pickupDate;
+            const pTime = data.pickupTime || currentContract.pickupTime;
+            const dDay = data.dropoffDate || currentContract.dropoffDate;
+            const dTime = data.dropoffTime || currentContract.dropoffTime;
 
-            const overlaps = await prisma.contract.findFirst({
-                where: {
-                    id: { not: id }, // Exclude self
-                    vehicleId: data.vehicleId,
-                    status: { in: ['UPCOMING', 'IN_PROGRESS'] },
-                    AND: [
-                        { pickupDate: { lte: end } },
-                        { dropoffDate: { gte: start } }
-                    ]
-                }
-            });
+            const newStart = combineDateAndTime(pDay, pTime);
+            const newEnd = combineDateAndTime(dDay, dTime);
 
-            if (overlaps) {
-                return res.status(400).json({
-                    message: 'Vehicle is already booked for these dates',
-                    conflict: {
-                        start: overlaps.pickupDate,
-                        end: overlaps.dropoffDate
+            if (newStart && newEnd) {
+                const existingContracts = await prisma.contract.findMany({
+                    where: {
+                        id: { not: id }, // Exclude self
+                        vehicleId: vId,
+                        status: { in: ['UPCOMING', 'IN_PROGRESS'] },
+                        AND: [
+                            { pickupDate: { lte: dDay } },
+                            { dropoffDate: { gte: pDay } }
+                        ]
                     }
                 });
+
+                const overlap = existingContracts.find(c => {
+                    const cStart = combineDateAndTime(c.pickupDate, c.pickupTime);
+                    const cEnd = combineDateAndTime(c.dropoffDate, c.dropoffTime);
+                    if (!cStart || !cEnd) return false;
+                    return (newStart < cEnd) && (cStart < newEnd);
+                });
+
+                if (overlap) {
+                    return res.status(400).json({
+                        message: 'This vehicle already have upcoming booking that date and time range, so please select another vehicle or select another date time range',
+                        conflict: {
+                            start: combineDateAndTime(overlap.pickupDate, overlap.pickupTime),
+                            end: combineDateAndTime(overlap.dropoffDate, overlap.dropoffTime)
+                        }
+                    });
+                }
             }
         }
 

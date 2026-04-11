@@ -73,6 +73,7 @@ model Client {
   phone               String?
   mobile              String?
   address             String?
+  description         String?
   
   // Local/Foreign Fields
   name                String?
@@ -104,14 +105,15 @@ model Client {
   intlDrivingLicenseBackUrl  String?
   aaPermitUrl                String?
   
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-
+  // New Fields for System Sync
+  userId              String?  @db.ObjectId
   loyaltyPoints       Float    @default(0)
   loyaltyEnabled      Boolean  @default(true)
-  loyaltyEarnRate   Float?
-  loyaltyRedeemRate Float?
-
+  loyaltyEarnRate     Float?
+  loyaltyRedeemRate   Float?
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   bookings            Booking[]
   contracts           Contract[]
