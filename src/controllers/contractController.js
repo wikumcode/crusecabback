@@ -185,7 +185,7 @@ exports.createContract = async (req, res) => {
         const existingContracts = await prisma.contract.findMany({
             where: {
                 vehicleId: data.vehicleId,
-                status: { in: ['UPCOMING', 'IN_PROGRESS'] },
+                status: { in: ['UPCOMING', 'IN_PROGRESS', 'RETURN'] },
                 AND: [
                     { pickupDate: { lte: data.dropoffDate } },
                     { dropoffDate: { gte: data.pickupDate } }
@@ -341,7 +341,7 @@ exports.updateContract = async (req, res) => {
                     where: {
                         id: { not: id }, // Exclude self
                         vehicleId: vId,
-                        status: { in: ['UPCOMING', 'IN_PROGRESS'] },
+                        status: { in: ['UPCOMING', 'IN_PROGRESS', 'RETURN'] },
                         AND: [
                             { pickupDate: { lte: dDay } },
                             { dropoffDate: { gte: pDay } }
@@ -389,6 +389,18 @@ exports.updateContract = async (req, res) => {
 
         // Status Transition Logic
         if (status === 'IN_PROGRESS') {
+            // SYNC: Ensure Start Odometer matches the latest vehicle reading (Handover Sync)
+            const vehicle = await prisma.vehicle.findUnique({ where: { id: contract.vehicleId } });
+            const currentStartOdo = Number(data.startOdometer || contract.startOdometer) || 0;
+            const latestVehicleOdo = Number(vehicle?.lastOdometer) || 0;
+
+            if (latestVehicleOdo > currentStartOdo) {
+                await prisma.contract.update({
+                    where: { id: contract.id },
+                    data: { startOdometer: latestVehicleOdo }
+                });
+            }
+
             await prisma.vehicle.update({
                 where: { id: contract.vehicleId },
                 data: { status: 'RENTED' }
@@ -473,13 +485,33 @@ exports.updateContract = async (req, res) => {
                     previousStatus !== status
                 )
             ) {
+                const finalEndOdo = Number(data.endOdometer) || 0;
+
                 await prisma.odometer.create({
                     data: {
                         vehicleId: contract.vehicleId,
-                        reading: data.endOdometer,
+                        reading: finalEndOdo,
                         source: 'CONTRACT_END'
                     }
                 });
+
+                // FUTURE PROPAGATION: Update the next chronological upcoming booking
+                const nextContract = await prisma.contract.findFirst({
+                    where: {
+                        vehicleId: contract.vehicleId,
+                        status: 'UPCOMING',
+                        pickupDate: { gte: contract.dropoffDate },
+                        id: { not: contract.id }
+                    },
+                    orderBy: { pickupDate: 'asc' }
+                });
+
+                if (nextContract) {
+                    await prisma.contract.update({
+                        where: { id: nextContract.id },
+                        data: { startOdometer: finalEndOdo }
+                    });
+                }
             }
 
             // Settlement: late return extra charges come from security deposit liability

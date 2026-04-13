@@ -23,12 +23,24 @@ function buildCreditNoteNo(sequence, date = new Date()) {
 }
 
 function getBackendBaseUrlFromReq(req) {
+    // 1. Check for explicit environment variable first
+    if (process.env.BACKEND_URL) {
+        return process.env.BACKEND_URL.replace(/\/$/, '');
+    }
+
+    // 2. Fallback to request host/origin
+    const protocol = req.protocol || 'https';
+    const host = req.headers.host;
+    
+    if (host) {
+        return `${protocol}://${host}`;
+    }
+
+    // 3. Absolute fallback
     const origin = req.headers.origin || req.headers.referer;
     if (!origin) return 'http://localhost:5000';
     try {
-        const u = new URL(origin);
-        u.port = '5000';
-        return u.origin;
+        return new URL(origin).origin;
     } catch {
         return 'http://localhost:5000';
     }
@@ -813,29 +825,40 @@ function computeLateExtrasForContract(contract, extraData = {}) {
 
     const scheduledEnd = combineDateAndTime(contract.dropoffDate, contract.dropoffTime);
     const actualEnd = combineDateAndTime(contract.actualReturnDate, contract.actualReturnTime);
-    if (!scheduledEnd || !actualEnd || actualEnd.getTime() <= scheduledEnd.getTime()) {
-        return { extraDayCharge, extraTimeRemainderCharge, extraKmCost };
+    
+    // 1. Calculate Time Extras (only if late)
+    if (scheduledEnd && actualEnd && actualEnd.getTime() > scheduledEnd.getTime()) {
+        const overtimeMinutesCeil = Math.ceil((actualEnd.getTime() - scheduledEnd.getTime()) / (1000 * 60));
+        const extraDays = Math.floor(overtimeMinutesCeil / 1440);
+        const remMinutes = overtimeMinutesCeil - extraDays * 1440;
+
+        extraDayCharge = rate * extraDays;
+        extraTimeRemainderCharge = remMinutes > 0 ? rate * (remMinutes / 1440) : 0;
+        
+        // Time coverage adjustments for mileage
+        const dailyKm = safeNumber(contract.dailyKmLimit);
+        const dailyCoverageKm = Math.round(dailyKm * (overtimeMinutesCeil / 1440));
+        // We add these to allocatedKm effectively
     }
 
-    // Overtime rounded up to minutes
-    const overtimeMinutesCeil = Math.ceil((actualEnd.getTime() - scheduledEnd.getTime()) / (1000 * 60));
-    const extraDays = Math.floor(overtimeMinutesCeil / 1440);
-    const remMinutes = overtimeMinutesCeil - extraDays * 1440;
-
-    extraDayCharge = rate * extraDays;
-    extraTimeRemainderCharge = remMinutes > 0 ? rate * (remMinutes / 1440) : 0;
-
-    // Extra mileage coverage: overtime time covers additional km first.
+    // 2. Calculate Mileage Extras (always if over limit)
     const dailyKm = safeNumber(contract.dailyKmLimit);
     const allocated = safeNumber(contract.allocatedKm);
-    const dailyCoverageKm = Math.round(dailyKm * (overtimeMinutesCeil / 1440));
-    const coveredKm = allocated + dailyCoverageKm;
+    
+    // Calculate total allowed KM including any overtime coverage
+    let overtimeCoverageKm = 0;
+    if (scheduledEnd && actualEnd && actualEnd.getTime() > scheduledEnd.getTime()) {
+        const overtimeMinutes = (actualEnd.getTime() - scheduledEnd.getTime()) / (1000 * 60);
+        overtimeCoverageKm = Math.round(dailyKm * (overtimeMinutes / 1440));
+    }
+    
+    const totalAllowedKm = allocated + overtimeCoverageKm;
 
     const startOdo = safeNumber(contract.startOdometer);
     const endOdo = safeNumber(extraData.endOdometer ?? contract.endOdometer);
     const usedKm = endOdo > 0 ? Math.max(0, endOdo - startOdo) : 0;
 
-    const remainingExtraKm = Math.max(0, usedKm - coveredKm);
+    const remainingExtraKm = Math.max(0, usedKm - totalAllowedKm);
     const perKmRate = safeNumber(contract.extraMileageCharge);
     extraKmCost = remainingExtraKm * perKmRate;
 
@@ -845,7 +868,7 @@ function computeLateExtrasForContract(contract, extraData = {}) {
 exports.createReturnInvoiceForContract = async (req, res) => {
     try {
         const { contractId } = req.params;
-        const { currency } = createUpfrontSchema.parse(req.body || {});
+        const { currency, ...overrides } = req.body || {};
 
         const existing = await prisma.invoice.findFirst({ where: { contractId, type: 'RETURN' } });
         if (existing && existing.status === 'PAID') {
@@ -887,6 +910,45 @@ exports.createReturnInvoiceForContract = async (req, res) => {
             }
         });
         if (!contract) return res.status(404).json({ message: 'Contract not found' });
+
+        // Merge overrides from frontend (Live Data Sync)
+        if (overrides.actualReturnDate) {
+            contract.actualReturnDate = new Date(overrides.actualReturnDate);
+        }
+        if (overrides.actualReturnTime) contract.actualReturnTime = overrides.actualReturnTime;
+        if (overrides.endOdometer !== undefined) contract.endOdometer = safeNumber(overrides.endOdometer);
+        if (overrides.damageCharge !== undefined) contract.damageCharge = safeNumber(overrides.damageCharge);
+        if (overrides.otherChargeAmount !== undefined) contract.otherChargeAmount = safeNumber(overrides.otherChargeAmount);
+        if (overrides.otherChargeDescription !== undefined) contract.otherChargeDescription = overrides.otherChargeDescription;
+        if (overrides.isCollection !== undefined) contract.isCollection = !!overrides.isCollection;
+        if (overrides.collectionCharge !== undefined) contract.collectionCharge = safeNumber(overrides.collectionCharge);
+        if (overrides.securityDeposit !== undefined) contract.securityDeposit = safeNumber(overrides.securityDeposit);
+        
+        // Smart fallback for extra mileage charge
+        const extraMileageRate = safeNumber(overrides.extraMileageCharge || contract.extraMileageCharge);
+        contract.extraMileageCharge = extraMileageRate > 0 ? extraMileageRate : safeNumber(contract.vehicle?.extraKmCharge);
+
+        // SYNC: Update the database with these live values so the contract record is accurate
+        try {
+            await prisma.contract.update({
+                where: { id: contractId },
+                data: {
+                    actualReturnDate: contract.actualReturnDate,
+                    actualReturnTime: contract.actualReturnTime,
+                    endOdometer: contract.endOdometer,
+                    damageCharge: contract.damageCharge,
+                    otherChargeAmount: contract.otherChargeAmount,
+                    otherChargeDescription: contract.otherChargeDescription,
+                    isCollection: contract.isCollection,
+                    collectionCharge: contract.collectionCharge,
+                    securityDeposit: contract.securityDeposit,
+                    extraMileageCharge: contract.extraMileageCharge
+                }
+            });
+        } catch (updateError) {
+            console.error('Failed to sync contract data during invoice creation:', updateError);
+            // We continue even if update fails, but log it.
+        }
 
         // We only generate return invoice when return details exist.
         if (!contract.actualReturnDate || !contract.actualReturnTime) {
@@ -1033,6 +1095,48 @@ exports.createReturnInvoiceForContract = async (req, res) => {
             return res.status(400).json({ message: 'Validation Error', errors: error.errors });
         }
         res.status(400).json({ message: error.message || 'Failed to create return invoice' });
+    }
+};
+
+/**
+ * Delete an invoice.
+ * - ISSUED status: ADMIN or SUPER_ADMIN required.
+ * - PAID status: ONLY SUPER_ADMIN allowed.
+ */
+exports.deleteInvoice = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userRole = req.user.role;
+
+        const invoice = await prisma.invoice.findUnique({
+            where: { id }
+        });
+
+        if (!invoice) {
+            return res.status(404).json({ message: 'Invoice not found' });
+        }
+
+        // Check Permissions
+        if (invoice.status === 'PAID') {
+            if (userRole !== 'SUPER_ADMIN') {
+                return res.status(403).json({ message: 'Only Super Admin can delete a PAID invoice.' });
+            }
+        } else {
+            // ISSUED or VOID
+            if (userRole !== 'ADMIN' && userRole !== 'SUPER_ADMIN') {
+                return res.status(403).json({ message: 'Insufficient permissions to delete this invoice.' });
+            }
+        }
+
+        // Delete the invoice (Cascade will handle LedgerEntry)
+        await prisma.invoice.delete({
+            where: { id }
+        });
+
+        res.json({ message: 'Invoice deleted successfully' });
+    } catch (error) {
+        console.error('Delete Invoice Error:', error);
+        res.status(500).json({ message: error.message || 'Failed to delete invoice' });
     }
 };
 

@@ -15,6 +15,7 @@ router.get('/:id/share-link', authenticateToken, authorizeRoles('ADMIN', 'STAFF'
 router.get('/:id', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.getInvoice);
 router.put('/:id/mark-paid', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.markInvoicePaid);
 router.post('/:id/credit-note', authenticateToken, authorizeRoles('ADMIN'), invoiceController.createCreditNote);
+router.delete('/:id', authenticateToken, authorizeRoles('ADMIN', 'SUPER_ADMIN'), invoiceController.deleteInvoice);
 
 module.exports = router;
 
