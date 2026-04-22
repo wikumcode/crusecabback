@@ -217,19 +217,31 @@ const fs = require('fs');
 
 exports.createVendorBill = async (req, res) => {
     try {
-        const { vendorId, vehicleId, month, year, items, description, monthlyPayment } = req.body;
+        const { vendorId, vehicleId, month, year, items, description, monthlyPayment, billingType, billingFrom, billingTo } = req.body;
 
         const billNumber = await generateBillNumber();
 
         const totalAmount = items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+
+        let parsedMonth = parseInt(month);
+        let parsedYear = parseInt(year);
+        
+        if (billingType === 'SHORT_TERM' && billingFrom) {
+            const date = new Date(billingFrom);
+            parsedMonth = date.getMonth() + 1;
+            parsedYear = date.getFullYear();
+        }
 
         const bill = await prisma.vendorBill.create({
             data: {
                 billNumber,
                 vendor: { connect: { id: vendorId } },
                 vehicle: { connect: { id: vehicleId } },
-                month: parseInt(month),
-                year: parseInt(year),
+                month: parsedMonth,
+                year: parsedYear,
+                billingType: billingType || 'LONG_TERM',
+                billingFrom: billingFrom ? new Date(billingFrom) : null,
+                billingTo: billingTo ? new Date(billingTo) : null,
                 monthlyPayment: parseFloat(monthlyPayment) || totalAmount,
                 repairDeductions: 0,
                 expenseDeductions: 0,
@@ -274,7 +286,7 @@ exports.createVendorBill = async (req, res) => {
 exports.updateVendorBill = async (req, res) => {
     try {
         const { id } = req.params;
-        const { month, year, items, description, monthlyPayment } = req.body;
+        const { month, year, items, description, monthlyPayment, billingType, billingFrom, billingTo } = req.body;
 
         // Check if bill exists and is pending
         const existingBill = await prisma.vendorBill.findUnique({ where: { id } });
@@ -282,6 +294,15 @@ exports.updateVendorBill = async (req, res) => {
         if (existingBill.status !== 'PENDING') return res.status(400).json({ message: 'Only pending bills can be edited' });
 
         const totalAmount = items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+
+        let parsedMonth = parseInt(month);
+        let parsedYear = parseInt(year);
+        
+        if (billingType === 'SHORT_TERM' && billingFrom) {
+            const date = new Date(billingFrom);
+            parsedMonth = date.getMonth() + 1;
+            parsedYear = date.getFullYear();
+        }
 
         // Update bill and items using transaction
         const updatedBill = await prisma.$transaction(async (tx) => {
@@ -292,8 +313,11 @@ exports.updateVendorBill = async (req, res) => {
             return await tx.vendorBill.update({
                 where: { id },
                 data: {
-                    month: parseInt(month),
-                    year: parseInt(year),
+                    month: parsedMonth,
+                    year: parsedYear,
+                    billingType: billingType || 'LONG_TERM',
+                    billingFrom: billingFrom ? new Date(billingFrom) : null,
+                    billingTo: billingTo ? new Date(billingTo) : null,
                     monthlyPayment: parseFloat(monthlyPayment) || totalAmount,
                     totalAmount: totalAmount,
                     description,

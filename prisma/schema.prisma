@@ -619,6 +619,9 @@ model VendorBill {
   carriedOverBalance Float @default(0)
   description     String?  // Deduction reasons
   status          String   @default("PENDING") // PENDING, PAID
+  billingType     String?  @default("LONG_TERM") // LONG_TERM, SHORT_TERM
+  billingFrom     DateTime?
+  billingTo       DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
