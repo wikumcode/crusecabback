@@ -1,423 +1,319 @@
 const prisma = require('../lib/prisma');
+const { getMongoClient } = require('../utils/sequence');
 const bcrypt = require('bcryptjs');
+const { ObjectId } = require('mongodb');
 
-const BRANDS = [
-    { name: 'Toyota', models: ['Prius', 'Corolla'] },
-    { name: 'Honda', models: ['Vezel', 'Civic'] },
-    { name: 'BMW', models: ['520d', 'X5'] },
-    { name: 'Mercedes', models: ['C200', 'E250'] },
-    { name: 'Audi', models: ['A4', 'Q5'] },
-    { name: 'Tesla', models: ['Model 3', 'Model Y'] },
-    { name: 'Nissan', models: ['Leaf', 'X-Trail'] },
-    { name: 'Ford', models: ['Mustang', 'Everest'] }
-];
+exports.getDashboardStats = async (req, res) => {
+    try {
+        const [
+            contractCount,
+            vehicleCount,
+            clientCount,
+            availableVehicles,
+            rentedVehicles,
+            maintenanceVehicles,
+            upcomingContracts,
+            inProgressContracts
+        ] = await Promise.all([
+            prisma.contract.count(),
+            prisma.vehicle.count(),
+            prisma.client.count(),
+            prisma.vehicle.count({ where: { status: 'AVAILABLE' } }),
+            prisma.vehicle.count({ where: { status: 'RENTED' } }),
+            prisma.vehicle.count({ where: { status: 'MAINTENANCE' } }),
+            prisma.contract.count({ where: { status: 'UPCOMING' } }),
+            prisma.contract.count({ where: { status: 'IN_PROGRESS' } })
+        ]);
 
-const MODEL_IMAGES = {
-    'Prius': 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Toyota_Prius_ZVW50.jpg/800px-Toyota_Prius_ZVW50.jpg',
-    'Corolla': 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/2019_Toyota_Corolla_Icon_Tech_HEV_CVT_1.8_Front.jpg/800px-2019_Toyota_Corolla_Icon_Tech_HEV_CVT_1.8_Front.jpg',
-    'Vezel': 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Honda_VEZEL_HYBRID_Z_Honda_SENSING_%28DAA-RU3%29_front.jpg/800px-Honda_VEZEL_HYBRID_Z_Honda_SENSING_%28DAA-RU3%29_front.jpg',
-    'Civic': 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/2017_Honda_Civic_EX_VTEC_CVT_1.0_Front.jpg/800px-2017_Honda_Civic_EX_VTEC_CVT_1.0_Front.jpg',
-    '520d': 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/18/BMW_G30_IMG_0199.jpg/800px-BMW_G30_IMG_0199.jpg',
-    'X5': 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/2019_BMW_X5_xDrive30d_M_Sport_Automatic_3.0_Front.jpg/800px-2019_BMW_X5_xDrive30d_M_Sport_Automatic_3.0_Front.jpg',
-    'C200': 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/2019_Mercedes-Benz_C200_AMG_Line_EQ_Boost_1.5_Front.jpg/800px-2019_Mercedes-Benz_C200_AMG_Line_EQ_Boost_1.5_Front.jpg',
-    'E250': 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/2014_Mercedes-Benz_E_250_%28W_212_MY14%29_Avantgarde_sedan_%282015-08-07%29_01.jpg/800px-2014_Mercedes-Benz_E_250_%28W_212_MY14%29_Avantgarde_sedan_%282015-08-07%29_01.jpg',
-    'A4': 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f0/2018_Audi_A4_Sport_TDI_Quattro_S-A_2.0_Front.jpg/800px-2018_Audi_A4_Sport_TDI_Quattro_S-A_2.0_Front.jpg',
-    'Q5': 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/2018_Audi_Q5_S_Line_TDI_Quattro_S-A_2.0_Front.jpg/800px-2018_Audi_Q5_S_Line_TDI_Quattro_S-A_2.0_Front.jpg',
-    'Model 3': 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/91/2019_Tesla_Model_3_Performance_AWD_Front.jpg/800px-2019_Tesla_Model_3_Performance_AWD_Front.jpg',
-    'Model Y': 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/14/2021_Tesla_Model_Y_Long_Range_AWD_Front.jpg/800px-2021_Tesla_Model_Y_Long_Range_AWD_Front.jpg',
-    'Leaf': 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/2018_Nissan_Leaf_Tekna_Front.jpg/800px-2018_Nissan_Leaf_Tekna_Front.jpg',
-    'X-Trail': 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/2018_Nissan_X-Trail_Tekna_DCi_1.6_Front.jpg/800px-2018_Nissan_X-Trail_Tekna_DCi_1.6_Front.jpg',
-    'Mustang': 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d1/2018_Ford_Mustang_GT_5.0.jpg/800px-2018_Ford_Mustang_GT_5.0.jpg',
-    'Everest': 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/98/2016_Ford_Everest_Limited_front.jpg/800px-2016_Ford_Everest_Limited_front.jpg'
+        res.json({
+            counts: {
+                contracts: contractCount,
+                vehicles: vehicleCount,
+                clients: clientCount,
+            },
+            fleetStatus: {
+                available: availableVehicles,
+                rented: rentedVehicles,
+                maintenance: maintenanceVehicles,
+            },
+            activeContracts: {
+                upcoming: upcomingContracts,
+                inProgress: inProgressContracts,
+            }
+        });
+    } catch (error) {
+        console.error('Get Dashboard Stats Error:', error);
+        res.status(500).json({ message: 'Failed to fetch dashboard stats' });
+    }
 };
 
 exports.loadDemoData = async (req, res) => {
     try {
-        console.log('Loading demo data...');
+        const mClient = await getMongoClient();
+        // Fallback: If parsing fails, mClient.db() usually picks the right one from connection string
+        const dbName = process.env.DATABASE_URL?.split('/').pop().split('?')[0] || undefined;
+        const db = mClient.db(dbName);
 
-        // 1. Create Brands and Models
-        const modelList = [];
-        for (const brandData of BRANDS) {
-            const brand = await prisma.vehicleBrand.upsert({
-                where: { name: brandData.name },
-                update: {},
-                create: { name: brandData.name }
-            });
+        console.log(`[DemoData] Starting load for DB: ${db.databaseName}`);
 
-            for (const modelName of brandData.models) {
-                const model = await prisma.vehicleModel.upsert({
-                    where: {
-                        name_brandId: {
-                            name: modelName,
-                            brandId: brand.id
-                        }
-                    },
-                    update: {},
-                    create: {
-                        name: modelName,
-                        brandId: brand.id
-                    }
-                });
-                modelList.push(model);
+        // 1. CLEAR EXISTING DEMO DATA FIRST (Idempotency)
+        const collections = [
+            'Vehicle', 'Client', 'VehicleModel', 'VehicleBrand', 
+            'User', 'VendorDetails', 'DriverDetails', 'Odometer',
+            'Contract', 'Booking', 'Invoice', 'Maintenance', 'VehicleExpense',
+            'InvoicePayment', 'AdvanceReceipt'
+        ];
+        for (const coll of collections) {
+            await db.collection(coll).deleteMany({ isDemo: true });
+        }
+
+        // 2. Brands and Models (Upsert-style)
+        const brands = [
+            { name: 'Toyota', models: ['Premio', 'Axio', 'Prius', 'Vitz'] },
+            { name: 'Honda', models: ['Civic', 'Vezel', 'Grace', 'Fit'] },
+            { name: 'Suzuki', models: ['WagonR', 'Alto', 'Every'] },
+            { name: 'Nissan', models: ['Leaf', 'Dayz'] }
+        ];
+
+        const modelIds = [];
+        for (const b of brands) {
+            // Find or Create Brand
+            let brand = await db.collection('VehicleBrand').findOne({ name: b.name });
+            if (!brand) {
+                const result = await db.collection('VehicleBrand').insertOne({ name: b.name, isDemo: true });
+                brand = { _id: result.insertedId, name: b.name };
+            }
+            
+            for (const m of b.models) {
+                let model = await db.collection('VehicleModel').findOne({ name: m, brandId: brand._id });
+                if (!model) {
+                    const result = await db.collection('VehicleModel').insertOne({ 
+                        name: m, 
+                        brandId: brand._id, 
+                        isDemo: true,
+                        createdAt: new Date(),
+                        updatedAt: new Date()
+                    });
+                    modelIds.push(result.insertedId);
+                } else {
+                    modelIds.push(model._id);
+                }
             }
         }
 
-        // 2. Create 25 Vehicles
-        const vehicles = [];
-        for (let i = 0; i < 25; i++) {
-            const model = modelList[Math.floor(Math.random() * modelList.length)];
-            const licensePlate = `LB-${1000 + i}`;
-            const fuelTypes = ['Petrol', 'Diesel', 'Hybrid', 'Electric'];
-            const transmissions = ['Automatic', 'Manual'];
-            const colors = ['White', 'Black', 'Silver', 'Blue', 'Red', 'Grey'];
-
-            const defaultFallback = 'https://images.unsplash.com/photo-1590362891991-f70092c4cd4e?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80';
-            const carImage = MODEL_IMAGES[model.name] || defaultFallback;
-
-            const vehicle = await prisma.vehicle.upsert({
-                where: { licensePlate },
-                update: { imageUrl: carImage },
-                create: {
-                    modelId: model.id,
-                    year: 2020 + Math.floor(Math.random() * 5),
-                    licensePlate,
-                    color: colors[Math.floor(Math.random() * colors.length)],
-                    fuelType: fuelTypes[Math.floor(Math.random() * fuelTypes.length)],
-                    transmission: transmissions[Math.floor(Math.random() * transmissions.length)],
-                    status: 'AVAILABLE',
-                    imageUrl: carImage,
-                    dailyRentalRate: 5000 + Math.floor(Math.random() * 15000),
-                    dailyAllocatedKm: 100,
-                    lastOdometer: 1000 + Math.floor(Math.random() * 50000),
-                    features: 'GPS, Bluetooth, Reverse Camera',
-                    ownership: 'COMPANY'
-                }
+        // 3. Vendors (Users + Details)
+        const vendorIds = [];
+        const hashedPassword = await bcrypt.hash('password123', 10);
+        for (let i = 1; i <= 3; i++) {
+            const email = `demo.vendor${i}@rentix.com`;
+            // Delete existing user if it's not a demo user but has our demo email (unlikely but safe)
+            await db.collection('User').deleteOne({ email, isDemo: { $ne: true } });
+            
+            const user = await db.collection('User').insertOne({
+                email,
+                name: `Demo Vendor ${i}`,
+                password: hashedPassword,
+                role: 'ADMIN',
+                isDemo: true,
+                createdAt: new Date(),
+                updatedAt: new Date()
             });
-            vehicles.push(vehicle);
+            await db.collection('VendorDetails').insertOne({
+                userId: user.insertedId,
+                vendorCode: `VEN/DEMO${i}`,
+                vendorType: i === 1 ? 'VEHICLE_OWNER' : 'SERVICE_VENDOR',
+                phone: `071000000${i}`,
+                isDemo: true,
+                createdAt: new Date(),
+                updatedAt: new Date()
+            });
+            vendorIds.push(user.insertedId);
         }
 
-        // 3. Create 5 Clients
-        const rawClients = [
-            { name: 'John Doe', email: 'john@demo.com', type: 'LOCAL', mobile: '0771234561' },
-            { name: 'Jane Smith', email: 'jane@demo.com', type: 'LOCAL', mobile: '0771234562' },
-            { name: 'Acme Corp', email: 'info@acme.demo.com', type: 'CORPORATE', companyName: 'Acme Corp', mobile: '0112345678' },
-            { name: 'Hans Mueller', email: 'hans@demo.com', type: 'FOREIGN', passportNo: 'N1234567', mobile: '0771234563' },
-            { name: 'Globex Inc', email: 'contact@globex.demo.com', type: 'CORPORATE', companyName: 'Globex Inc', mobile: '0118765432' }
-        ];
-
-        const clients = [];
-        for (const rc of rawClients) {
-            const count = await prisma.client.count();
-            const code = `CUS/${String(count + 1).padStart(5, '0')}`;
-            const client = await prisma.client.upsert({
-                where: { email: rc.email },
-                update: {},
-                create: {
-                    ...rc,
-                    code,
-                    status: 'CONFIRMED',
-                    address: 'Colombo, Sri Lanka',
-                    phone: rc.mobile
-                }
+        // 4. Vehicles
+        const vehicleIds = [];
+        for (let i = 1; i <= 25; i++) {
+            const v = {
+                licensePlate: `WP DEMO-${1000 + i}`,
+                vin: `VIN-DEMO-${100000 + i}`,
+                year: 2018 + (i % 6),
+                modelId: modelIds[i % modelIds.length],
+                fuelType: i % 3 === 0 ? 'Hybrid' : 'Petrol',
+                transmission: 'Automatic',
+                color: ['Pearl White', 'Silver', 'Black', 'Blue'][i % 4],
+                status: i < 5 ? 'RENTED' : (i === 6 ? 'MAINTENANCE' : 'AVAILABLE'),
+                dailyRentalRate: 4500 + (i * 100),
+                dailyAllocatedKm: 100,
+                ownership: i % 5 === 0 ? 'THIRD_PARTY' : 'COMPANY',
+                vendorId: i % 5 === 0 ? vendorIds[0] : null,
+                imageUrl: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&q=80&w=400',
+                isDemo: true,
+                createdAt: new Date(),
+                updatedAt: new Date()
+            };
+            const result = await db.collection('Vehicle').insertOne(v);
+            vehicleIds.push(result.insertedId);
+            
+            await db.collection('Odometer').insertOne({
+                vehicleId: result.insertedId,
+                reading: 10000 + (i * 500),
+                date: new Date(),
+                source: 'INITIAL',
+                isDemo: true
             });
-            clients.push(client);
         }
 
-        // 4. Create 5 Drivers
-        const drivers = [];
-        for (let i = 0; i < 5; i++) {
-            const email = `driver${i + 1}@demo.com`;
-            const user = await prisma.user.upsert({
-                where: { email },
-                update: {},
-                create: {
-                    email,
-                    name: `Demo Driver ${i + 1}`,
-                    role: 'DRIVER',
-                    password: await bcrypt.hash('password123', 10)
-                }
+        // 5. Clients
+        const clientIds = [];
+        for (let i = 1; i <= 10; i++) {
+            const result = await db.collection('Client').insertOne({
+                code: `CUS/DEMO${i}`,
+                type: i % 3 === 0 ? 'CORPORATE' : 'LOCAL',
+                status: 'CONFIRMED',
+                email: `demo.client${i}@example.com`,
+                name: `Demo Customer ${i}`,
+                phone: `077000000${i}`,
+                nicOrPassport: `DEMO${i}V`,
+                isDemo: true,
+                createdAt: new Date(),
+                updatedAt: new Date()
             });
-
-            await prisma.driverDetails.upsert({
-                where: { userId: user.id },
-                update: {},
-                create: {
-                    userId: user.id,
-                    licenseNumber: `DL-${10000 + i}`,
-                    licenseExpiryDate: new Date('2030-01-01'),
-                    phoneNumber: `07799988${i}`,
-                    address: 'Driver Address ' + (i + 1),
-                    nic: `NIC${10000 + i}V`,
-                    status: 'ACTIVE'
-                }
-            });
-            drivers.push(user);
+            clientIds.push(result.insertedId);
         }
 
-        // 5. Create 20 Bookings and Contracts
-        const bookings = [];
-        const contracts = [];
-        let odometerCount = 0;
-
-        for (let i = 0; i < 20; i++) {
-            const vehicle = vehicles[i % vehicles.length];
-            const client = clients[i % clients.length];
-            const startDate = new Date();
-            startDate.setDate(startDate.getDate() + (i * 2) - 15); // Better spread
-            const endDate = new Date(startDate);
-            endDate.setDate(endDate.getDate() + 3 + Math.floor(Math.random() * 5));
-
-            const days = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
-            const totalAmount = (vehicle.dailyRentalRate || 5000) * days;
-
-            // Create Booking
-            const booking = await prisma.booking.create({
-                data: {
-                    clientId: client.id,
-                    vehicleId: vehicle.id,
-                    startDate,
-                    endDate,
-                    totalAmount,
-                    status: i < 10 ? 'COMPLETED' : (i < 15 ? 'CONFIRMED' : 'PENDING')
-                }
+        // 6. Drivers
+        for (let i = 1; i <= 5; i++) {
+            const user = await db.collection('User').insertOne({
+                email: `demo.driver${i}@rentix.com`,
+                name: `Demo Driver ${i}`,
+                password: hashedPassword,
+                role: 'DRIVER',
+                isDemo: true,
+                createdAt: new Date(),
+                updatedAt: new Date()
             });
-            bookings.push(booking);
-
-            // Create Contract
-            const contract = await prisma.contract.create({
-                data: {
-                    customerId: client.id,
-                    vehicleId: vehicle.id,
-                    pickupDate: startDate,
-                    pickupTime: "10:00",
-                    dropoffDate: endDate,
-                    dropoffTime: "10:00",
-                    status: i < 5 ? 'COMPLETED' : (i < 12 ? 'IN_PROGRESS' : 'UPCOMING'),
-                    securityDeposit: 15000,
-                    fuelLevel: 'FULL',
-                    startOdometer: vehicle.lastOdometer || 15000,
-                    frontTyres: '100%',
-                    rearTyres: '100%',
-                    allocatedKm: 300,
-                    extraMileageCharge: 50,
-                    remark: 'Demo Contract generated via System API'
-                }
+            await db.collection('DriverDetails').insertOne({
+                userId: user.insertedId,
+                licenseNumber: `DL-DEMO-${i}`,
+                status: 'ACTIVE',
+                isDemo: true,
+                createdAt: new Date()
             });
-            contracts.push(contract);
+        }
 
-            // Create Payment
-            await prisma.payment.create({
-                data: {
-                    bookingId: booking.id,
-                    amount: totalAmount,
-                    method: i % 3 === 0 ? 'CREDIT_CARD' : 'CASH',
-                    status: i < 12 ? 'PAID' : 'PENDING',
-                    date: startDate
-                }
+        // 7. Contracts & Invoices
+        for (let i = 0; i < 15; i++) {
+            const status = i < 5 ? 'IN_PROGRESS' : (i < 10 ? 'COMPLETED' : 'UPCOMING');
+            const pickup = new Date();
+            pickup.setDate(pickup.getDate() - (10 - i));
+            const dropoff = new Date(pickup);
+            dropoff.setDate(dropoff.getDate() + 3);
+
+            const contract = await db.collection('Contract').insertOne({
+                contractNo: `CON-DEMO-${1000 + i}`,
+                customerId: clientIds[i % clientIds.length],
+                vehicleId: vehicleIds[i % vehicleIds.length],
+                status: status,
+                pickupDate: pickup,
+                pickupTime: '09:00',
+                dropoffDate: dropoff,
+                dropoffTime: '09:00',
+                appliedDailyRate: 5000,
+                securityDeposit: 15000,
+                fuelLevel: 'FULL',
+                startOdometer: 15000,
+                isDemo: true,
+                createdAt: new Date(),
+                updatedAt: new Date()
             });
 
-            // Odometer History
-            for (let j = 1; j <= 3; j++) {
-                await prisma.odometer.create({
-                    data: {
-                        vehicleId: vehicle.id,
-                        reading: (vehicle.lastOdometer || 15000) - (j * 500),
-                        date: new Date(new Date().getTime() - (j * 30 * 24 * 60 * 60 * 1000)),
-                        source: 'HISTORY_SEED'
-                    }
+            if (status !== 'UPCOMING') {
+                await db.collection('Invoice').insertOne({
+                    invoiceNo: `INV-DEMO-${1000 + i}`,
+                    sequence: 1000 + i,
+                    contractId: contract.insertedId,
+                    customerId: clientIds[i % clientIds.length],
+                    vehicleId: vehicleIds[i % vehicleIds.length],
+                    type: 'FINAL',
+                    total: 15000,
+                    status: 'PAID',
+                    lines: JSON.stringify([{ description: 'Rental Fee', amount: 15000 }]),
+                    isDemo: true,
+                    createdAt: new Date()
                 });
-                odometerCount++;
             }
         }
 
-        // 6. Create 5 Demo Vendors
-        const vendors = [];
-        const vendorData = [
-            { name: 'John Fleet Owner', email: 'owner1@demo.com', type: 'VEHICLE_OWNER', code: 'VEN/00001' },
-            { name: 'Quick Rent Partner', email: 'owner2@demo.com', type: 'VEHICLE_OWNER', code: 'VEN/00002' },
-            { name: 'Elite Service Pro', email: 'service@demo.com', type: 'SERVICE_VENDOR', code: 'VEN/00003' },
-            { name: 'Island Logistics', email: 'partner1@demo.com', type: 'VEHICLE_OWNER', code: 'VEN/00004' },
-            { name: 'Premier Motors', email: 'partner2@demo.com', type: 'SERVICE_VENDOR', code: 'VEN/00005' }
-        ];
-
-        for (const v of vendorData) {
-            const user = await prisma.user.upsert({
-                where: { email: v.email },
-                update: {},
-                create: {
-                    email: v.email,
-                    name: v.name,
-                    role: 'VENDOR',
-                    password: await bcrypt.hash('password123', 10)
-                }
+        // 8. Maintenance & Expenses
+        for (let i = 1; i <= 10; i++) {
+            await db.collection('Maintenance').insertOne({
+                vehicleId: vehicleIds[i % vehicleIds.length],
+                description: `Demo Service ${i}`,
+                cost: 5000 + (i * 500),
+                startDate: new Date(),
+                status: 'DONE',
+                isDemo: true,
+                createdAt: new Date()
             });
-
-            await prisma.vendorDetails.upsert({
-                where: { userId: user.id },
-                update: {},
-                create: {
-                    userId: user.id,
-                    vendorCode: v.code,
-                    vendorType: v.type,
-                    phone: '+94 7712345' + Math.floor(100 + Math.random() * 900),
-                    address: 'Demoland, Colombo ' + (Math.floor(Math.random() * 15) + 1),
-                    nic: '1990123' + Math.floor(1000 + Math.random() * 9000)
-                }
-            });
-            vendors.push(user);
-        }
-
-        // Assign vehicles to vendors (spread 10 vehicles)
-        for (let i = 0; i < 10; i++) {
-            await prisma.vehicle.update({
-                where: { id: vehicles[i].id },
-                data: { vendorId: vendors[i % 3].id } // Assign to first 3 primarily
+            await db.collection('VehicleExpense').insertOne({
+                vehicleId: vehicleIds[(i + 5) % vehicleIds.length],
+                description: `Demo Fuel/Wash ${i}`,
+                amount: 1500 + (i * 200),
+                date: new Date(),
+                isDemo: true,
+                createdAt: new Date()
             });
         }
 
-        // 7. Create 20 Maintenance Records (Vehicle Repairs)
-        const repairDescriptions = [
-            'Engine Oil Change and Filter Replacement',
-            'Brake Pad Replacement and Rotor Resurfacing',
-            'Transmission Fluid Flush',
-            'AC System Service and Gas Refill',
-            'Suspension Bushing Replacement',
-            'Tire Rotation and Wheel Alignment',
-            'Battery Replacement',
-            'Radiator Leak Repair',
-            'Fuel Pump Replacement',
-            'Spark Plug Service'
-        ];
-
-        for (let i = 0; i < 20; i++) {
-            const vehicle = vehicles[Math.floor(Math.random() * vehicles.length)];
-            const status = i < 8 ? 'DONE' : (i < 15 ? 'IN_PROGRESS' : 'PENDING');
-            const startDate = new Date();
-            startDate.setDate(startDate.getDate() - (Math.floor(Math.random() * 45)));
-
-            const endDate = status === 'DONE' ? new Date(startDate.getTime() + (2 * 24 * 60 * 60 * 1000)) : null;
-            const cost = status === 'DONE' ? 5000 + Math.floor(Math.random() * 25000) : null;
-
-            await prisma.maintenance.create({
-                data: {
-                    vehicleId: vehicle.id,
-                    description: repairDescriptions[i % repairDescriptions.length],
-                    startDate,
-                    endDate,
-                    cost,
-                    status
-                }
-            });
-        }
-
-        // 8. Create 30 Vehicle Expenses
-        const expenseTypes = [
-            'Fuel Top-up',
-            'Comprehensive Insurance Premium',
-            'Full Vehicle Grooming and Buffing',
-            'Parking Fees - Monthly Access',
-            'Revenue License Renewal',
-            'Spare Part: Wiper Blades',
-            'Waybill Stamp Duty',
-            'Highway Toll Top-up',
-            'Security Sticker Fee',
-            'Emission Test Fee'
-        ];
-
-        for (let i = 0; i < 30; i++) {
-            const vehicle = vehicles[Math.floor(Math.random() * vehicles.length)];
-            const date = new Date();
-            date.setDate(date.getDate() - (Math.floor(Math.random() * 90)));
-
-            await prisma.vehicleExpense.create({
-                data: {
-                    vehicleId: vehicle.id,
-                    description: expenseTypes[i % expenseTypes.length],
-                    amount: 500 + Math.floor(Math.random() * 40000),
-                    date
-                }
-            });
-        }
-
-        const result = {
-            vendors: vendors.length,
-            vehicleBrands: BRANDS.length,
-            vehicleModels: modelList.length,
-            vehicles: vehicles.length,
-            odometerRecords: odometerCount,
-            vehicleRepairs: 20,
-            vehicleExpenses: 30,
-            contracts: contracts.length,
-            invoices: bookings.length,
-            payments: 20
-        };
-
-        res.json({ message: 'Demo data loaded successfully', summary: result });
+        res.json({ 
+            message: 'Industrial demo data loaded successfully', 
+            summary: {
+                vehicles: 25,
+                clients: 10,
+                contracts: 15,
+                vendors: 3,
+                drivers: 5,
+                maintenance: 10,
+                expenses: 10
+            }
+        });
     } catch (error) {
-        console.error('Demo data load error:', error);
-        res.status(500).json({ error: 'Failed to load demo data', details: error.message });
+        console.error('Load Demo Data Error:', error);
+        res.status(500).json({ message: 'Failed to load demo data' });
     }
 };
 
 exports.removeDemoData = async (req, res) => {
     try {
-        console.log('Removing demo data...');
+        const mClient = await getMongoClient();
+        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
+        const db = mClient.db(dbName);
 
-        const demoClients = await prisma.client.findMany({ where: { email: { endsWith: '@demo.com' } } });
-        const clientIds = demoClients.map(c => c.id);
+        const collections = [
+            'Vehicle', 'Client', 'VehicleModel', 'VehicleBrand', 
+            'User', 'VendorDetails', 'DriverDetails', 'Odometer',
+            'Contract', 'Booking', 'Invoice', 'Maintenance', 'VehicleExpense',
+            'InvoicePayment', 'AdvanceReceipt'
+        ];
 
-        // Include old demo formats (LB-10, specific WP plates, and VINs from seed_now.js)
-        const demoVehicles = await prisma.vehicle.findMany({
-            where: {
-                OR: [
-                    { licensePlate: { startsWith: 'LB-10' } },
-                    { vin: { startsWith: 'VIN-100' } },
-                    { licensePlate: { in: ['WP CAB-1234', 'WP CBA-9876', 'WP CBB-5555', 'WP CBC-7777'] } }
-                ]
+        const results = {};
+        for (const coll of collections) {
+            try {
+                const count = await db.collection(coll).deleteMany({ isDemo: true });
+                results[coll] = count.deletedCount;
+            } catch (err) {
+                console.warn(`[DemoData] Removal skip for ${coll}:`, err.message);
+                results[coll] = 0;
             }
+        }
+
+        res.json({ 
+            message: 'Industrial demo data removed successfully', 
+            summary: results 
         });
-        const vehicleIds = demoVehicles.map(v => v.id);
-
-        const demoUsers = await prisma.user.findMany({ where: { email: { endsWith: '@demo.com' } } });
-        const userIds = demoUsers.map(u => u.id);
-
-        // Cleanup in order
-        await prisma.odometer.deleteMany({ where: { OR: [{ vehicleId: { in: vehicleIds } }, { source: 'HISTORY_SEED' }] } });
-
-        const demoBookings = await prisma.booking.findMany({
-            where: { OR: [{ clientId: { in: clientIds } }, { vehicleId: { in: vehicleIds } }] }
-        });
-        const bookingIds = demoBookings.map(b => b.id);
-
-        await prisma.payment.deleteMany({ where: { bookingId: { in: bookingIds } } });
-        await prisma.rentalAgreement.deleteMany({ where: { bookingId: { in: bookingIds } } });
-
-        const demoContracts = await prisma.contract.findMany({
-            where: { OR: [{ customerId: { in: clientIds } }, { vehicleId: { in: vehicleIds } }] }
-        });
-        const contractIds = demoContracts.map(c => c.id);
-
-        await prisma.vehicleExchange.deleteMany({ where: { contractId: { in: contractIds } } });
-        await prisma.contract.deleteMany({ where: { id: { in: contractIds } } });
-        await prisma.booking.deleteMany({ where: { id: { in: bookingIds } } });
-
-        await prisma.driverDetails.deleteMany({ where: { userId: { in: userIds } } });
-        await prisma.vendorDetails.deleteMany({ where: { userId: { in: userIds } } });
-
-        await prisma.maintenance.deleteMany({ where: { vehicleId: { in: vehicleIds } } });
-        await prisma.vehicleExpense.deleteMany({ where: { vehicleId: { in: vehicleIds } } });
-        await prisma.inspection.deleteMany({ where: { vehicleId: { in: vehicleIds } } });
-
-        await prisma.vehicle.deleteMany({ where: { id: { in: vehicleIds } } });
-        await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
-        await prisma.user.deleteMany({ where: { id: { in: userIds } } });
-
-        const result = { status: 'Cleanup complete' };
-
-        res.json({ message: 'Demo data removed successfully', result });
     } catch (error) {
-        console.error('Demo cleanup error:', error);
-        res.status(500).json({ error: 'Failed to remove demo data', details: error.message });
+        console.error('Remove Demo Data Error:', error);
+        res.status(500).json({ message: error.message || 'Failed to remove demo data' });
     }
 };
 
@@ -426,131 +322,74 @@ exports.wipeAllData = async (req, res) => {
         const { password } = req.body;
         if (!password) return res.status(400).json({ message: 'Password is required' });
 
-        const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return res.status(401).json({ message: 'Incorrect password. Wipe aborted.' });
-
-        console.log('Initiating full system data wipe by Super Admin...');
-
-        // 1. Delete all transactional data
-        await prisma.ledgerEntry.deleteMany({});
-        await prisma.invoice.deleteMany({});
-        await prisma.creditNote.deleteMany({});
-        await prisma.vendorBillItem.deleteMany({});
-        await prisma.vendorBill.deleteMany({});
-        await prisma.vehiclePaymentSchedule.deleteMany({});
-        await prisma.payment.deleteMany({});
-        
-        await prisma.odometer.deleteMany({});
-        await prisma.vehicleExchange.deleteMany({});
-        await prisma.contract.deleteMany({});
-        await prisma.booking.deleteMany({});
-        await prisma.quotation.deleteMany({});
-        await prisma.maintenance.deleteMany({});
-        await prisma.inspection.deleteMany({});
-        await prisma.rentalAgreement.deleteMany({});
-
-        // 2. Delete all inventory/customer data
-        await prisma.vehicle.deleteMany({});
-        await prisma.fleetCategory.deleteMany({});
-        await prisma.client.deleteMany({});
-
-        // 3. Delete Profiles (Driver/Vendor)
-        await prisma.driverDetails.deleteMany({});
-        await prisma.vendorDetails.deleteMany({});
-
-        // 4. Delete Users who are NOT ADMIN or SUPER_ADMIN
-        const deletedUsers = await prisma.user.deleteMany({
-            where: {
-                role: { notIn: ['ADMIN', 'SUPER_ADMIN'] }
+        // 1. Verify Administrative Authority (supports both old and new token formats)
+        const currentUserId = req.user.id || req.user.userId;
+        const user = await prisma.user.findFirst({
+            where: { 
+                id: currentUserId, 
+                role: { in: ['ADMIN', 'SUPER_ADMIN'] } 
             }
         });
 
-        // 5. Delete Meta Data (Models/Brands)
-        await prisma.vehicleExpense.deleteMany({});
-        await prisma.vehicleModel.deleteMany({});
-        await prisma.vehicleBrand.deleteMany({});
-        await prisma.emailLog.deleteMany({});
+        if (!user) return res.status(403).json({ message: 'Unauthorized: Administrative role required' });
 
-        // 6. Reset Sequences
-        await prisma.systemSetting.deleteMany({
-            where: {
-                key: { contains: '_sequence' }
-            }
-        });
-
-        res.json({ message: 'System purged and sequences reset successfully', usersDeleted: deletedUsers.count });
-    } catch (error) {
-        console.error('System wipe error:', error);
-        res.status(500).json({ error: 'Failed to wipe system data', details: error.message });
-    }
-};
-
-exports.getSequences = async (req, res) => {
-    try {
-        const now = new Date();
-        const mm = String(now.getMonth() + 1).padStart(2, '0');
-        const yyyy = String(now.getFullYear());
-        
-        // Define all core sequence keys that should exist in the system
-        const coreKeys = [
-            'invoice_sequence',
-            'credit_note_sequence',
-            'client_sequence',
-            'vendor_sequence',
-            'vendor_bill_sequence',
-            `contract_sequence_${yyyy}_${mm}`,
-            `quotation_sequence_${yyyy}_${mm}`
-        ];
-
-        // Fetch existing sequences from DB
-        const existingSequences = await prisma.systemSetting.findMany({
-            where: {
-                key: { contains: '_sequence' }
-            }
-        });
-
-        const existingKeys = existingSequences.map(s => s.key);
-        const results = [...existingSequences];
-
-        // For any core key that doesn't exist, provide a default '0' record
-        coreKeys.forEach(key => {
-            if (!existingKeys.includes(key)) {
-                results.push({
-                    key,
-                    value: '0',
-                    isDefault: true
-                });
-            }
-        });
-
-        // Ensure current month's contract/quotation sequences are sorted predictably
-        results.sort((a, b) => a.key.localeCompare(b.key));
-
-        res.json(results);
-    } catch (error) {
-        console.error('Failed to fetch sequences:', error);
-        res.status(500).json({ message: 'Failed to fetch sequences' });
-    }
-};
-
-exports.updateSequence = async (req, res) => {
-    try {
-        const { key, value, password } = req.body;
-        if (!password) return res.status(400).json({ message: 'Password is required' });
-
-        const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(401).json({ message: 'Incorrect password' });
 
-        const updated = await prisma.systemSetting.upsert({
-            where: { key },
-            update: { value: String(value) },
-            create: { key, value: String(value) }
+        // 2. Perform Wipe using Native Driver
+        const mClient = await getMongoClient();
+        // Use client.db() to automatically pick the DB from the connection string
+        const db = mClient.db();
+
+        console.log(`[Wipe] Initiating dynamic data purge for DB: ${db.databaseName}`);
+
+        // 3. Discover all collections dynamically
+        const collections = await db.listCollections().toArray();
+        const allCollectionNames = collections.map(c => c.name);
+
+        // Define collections to PRESERVE (Masters and Configs)
+        const preserveList = [
+            'User', 'SystemSetting', 'District', 'City', 
+            'PermissionGroup', 'EmailSettings', 'email_settings', 
+            'EmailTemplate', 'email_templates', 'EmailLog', 'email_logs'
+        ];
+
+        const results = {};
+        for (const collName of allCollectionNames) {
+            if (preserveList.includes(collName)) continue;
+
+            try {
+                const count = await db.collection(collName).deleteMany({});
+                results[collName] = count.deletedCount;
+            } catch (err) {
+                console.warn(`[Wipe] Failed to clear ${collName}:`, err.message);
+                results[collName] = 'Error';
+            }
+        }
+
+        // 4. Selective Cleanup for Preserved Collections
+        // Reset Sequences
+        const sequenceKeys = [
+            'invoice_no_seq', 'receipt_no_seq', 'contract_no_seq', 
+            'booking_no_seq', 'payment_no_seq', 'quotation_no_seq', 
+            'advance_receipt_no_seq', 'vendor_bill_no_seq', 'client_sequence'
+        ];
+        await db.collection('SystemSetting').deleteMany({
+            key: { $in: sequenceKeys }
         });
 
-        res.json(updated);
+        // Clear non-admin users
+        const userPurge = await db.collection('User').deleteMany({
+            role: { $nin: ['ADMIN', 'SUPER_ADMIN'] }
+        });
+        results['User (Non-Admins)'] = userPurge.deletedCount;
+
+        res.json({ 
+            message: 'Industrial system wipe completed successfully', 
+            summary: results 
+        });
     } catch (error) {
-        res.status(500).json({ message: 'Failed to update sequence' });
+        console.error('Wipe All Data Error:', error);
+        res.status(500).json({ message: error.message || 'Failed to wipe system data' });
     }
 };

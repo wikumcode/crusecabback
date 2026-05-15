@@ -3,8 +3,29 @@ const prisma = require('../lib/prisma');
 // --- Brands ---
 exports.getBrands = async (req, res) => {
     try {
-        const brands = await prisma.vehicleBrand.findMany({ include: { models: true } });
-        res.json(brands);
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 40;
+        const skip = (page - 1) * limit;
+
+        const [brands, totalCount] = await Promise.all([
+            prisma.vehicleBrand.findMany({
+                include: { models: true },
+                skip,
+                take: limit,
+                orderBy: { name: 'asc' }
+            }),
+            prisma.vehicleBrand.count()
+        ]);
+
+        res.json({
+            data: brands,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
+            }
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -48,12 +69,32 @@ exports.deleteBrand = async (req, res) => {
 exports.getModels = async (req, res) => {
     try {
         const { brandId } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 40;
+        const skip = (page - 1) * limit;
+
         const where = brandId ? { brandId } : {};
-        const models = await prisma.vehicleModel.findMany({
-            where,
-            include: { brand: true }
+        
+        const [models, totalCount] = await Promise.all([
+            prisma.vehicleModel.findMany({
+                where,
+                include: { brand: true },
+                skip,
+                take: limit,
+                orderBy: { name: 'asc' }
+            }),
+            prisma.vehicleModel.count({ where })
+        ]);
+
+        res.json({
+            data: models,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
+            }
         });
-        res.json(models);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -98,10 +139,28 @@ exports.deleteModel = async (req, res) => {
 // --- Categories ---
 exports.getCategories = async (req, res) => {
     try {
-        const categories = await prisma.fleetCategory.findMany({
-            orderBy: { sortOrder: 'asc' }
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 40;
+        const skip = (page - 1) * limit;
+
+        const [categories, totalCount] = await Promise.all([
+            prisma.fleetCategory.findMany({
+                orderBy: { sortOrder: 'asc' },
+                skip,
+                take: limit
+            }),
+            prisma.fleetCategory.count()
+        ]);
+
+        res.json({
+            data: categories,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
+            }
         });
-        res.json(categories);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

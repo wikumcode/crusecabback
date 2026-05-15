@@ -2,27 +2,43 @@ const prisma = require('../lib/prisma');
 
 const getAllPayments = async (req, res) => {
     try {
-        const payments = await prisma.payment.findMany({
-            include: {
-                booking: {
-                    include: {
-                        client: {
-                            select: {
-                                name: true,
-                                email: true
-                            }
-                        },
-                        vehicle: {
-                            select: {
-                                licensePlate: true,
-                                // make: true, // Legacy field, might be removed
-                                // model: true, // Legacy field, might be removed
-                                vehicleModel: {
-                                    select: {
-                                        name: true,
-                                        brand: {
-                                            select: {
-                                                name: true
+        const { search } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const requestedLimit = parseInt(req.query.limit) || 20;
+        const limit = Math.min(requestedLimit, 100);
+        const skip = (page - 1) * limit;
+
+        const where = {};
+        if (search && typeof search === 'string') {
+            const s = search.trim();
+            where.OR = [
+                { booking: { client: { name: { contains: s, mode: 'insensitive' } } } },
+                { booking: { vehicle: { licensePlate: { contains: s, mode: 'insensitive' } } } }
+            ];
+        }
+
+        const [payments, totalCount] = await Promise.all([
+            prisma.payment.findMany({
+                where,
+                include: {
+                    booking: {
+                        include: {
+                            client: {
+                                select: {
+                                    name: true,
+                                    email: true
+                                }
+                            },
+                            vehicle: {
+                                select: {
+                                    licensePlate: true,
+                                    vehicleModel: {
+                                        select: {
+                                            name: true,
+                                            brand: {
+                                                select: {
+                                                    name: true
+                                                }
                                             }
                                         }
                                     }
@@ -30,13 +46,25 @@ const getAllPayments = async (req, res) => {
                             }
                         }
                     }
-                }
-            },
-            orderBy: {
-                date: 'desc'
+                },
+                orderBy: {
+                    date: 'desc'
+                },
+                skip,
+                take: limit
+            }),
+            prisma.payment.count({ where })
+        ]);
+
+        res.json({
+            data: payments,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
             }
         });
-        res.json(payments);
     } catch (error) {
         console.error('Error fetching payments:', error);
         res.status(500).json({ error: 'Failed to fetch payments' });

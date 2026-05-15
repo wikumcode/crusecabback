@@ -73,12 +73,48 @@ exports.createDriver = async (req, res) => {
 
 exports.getDrivers = async (req, res) => {
     try {
-        const drivers = await prisma.user.findMany({
-            where: { role: 'DRIVER' },
-            include: { driverDetails: true },
-            orderBy: { createdAt: 'desc' }
+        const { search, status } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 40;
+        const skip = (page - 1) * limit;
+
+        const where = { role: 'DRIVER' };
+        
+        if (status && status !== 'ALL') {
+            where.driverDetails = { status };
+        }
+
+        if (search && typeof search === 'string') {
+            const s = search.trim();
+            where.OR = [
+                { name: { contains: s, mode: 'insensitive' } },
+                { email: { contains: s, mode: 'insensitive' } },
+                { driverDetails: { phoneNumber: { contains: s, mode: 'insensitive' } } },
+                { driverDetails: { licenseNumber: { contains: s, mode: 'insensitive' } } },
+                { driverDetails: { nic: { contains: s, mode: 'insensitive' } } }
+            ];
+        }
+
+        const [drivers, totalCount] = await Promise.all([
+            prisma.user.findMany({
+                where,
+                include: { driverDetails: true },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.user.count({ where })
+        ]);
+
+        res.json({
+            data: drivers,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
+            }
         });
-        res.json(drivers);
     } catch (error) {
         res.status(500).json({ message: 'Failed to fetch drivers' });
     }

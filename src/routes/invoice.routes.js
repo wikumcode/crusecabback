@@ -13,6 +13,7 @@ router.post('/contract/:contractId/return', authenticateToken, authorizeRoles('A
 router.get('/share/:invoiceId', invoiceController.getSharedInvoice);
 router.get('/:id/share-link', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.getInvoiceShareLink);
 router.get('/:id', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.getInvoice);
+router.post('/:id/record-payment', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.recordInvoicePayment);
 router.put('/:id/mark-paid', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.markInvoicePaid);
 router.post('/:id/credit-note', authenticateToken, authorizeRoles('ADMIN'), invoiceController.createCreditNote);
 router.delete('/:id', authenticateToken, authorizeRoles('ADMIN', 'SUPER_ADMIN'), invoiceController.deleteInvoice);

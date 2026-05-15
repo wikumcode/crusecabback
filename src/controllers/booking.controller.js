@@ -17,16 +17,15 @@ exports.createBooking = async (req, res) => {
             password
         } = req.body;
 
-        const result = await prisma.$transaction(async (tx) => {
             // 1. Create or Update Client
-            let client = await tx.client.findUnique({
+            let client = await prisma.client.findUnique({
                 where: { email: customerInfo.email }
             });
 
             if (!client) {
-                const count = await tx.client.count();
+                const count = await prisma.client.count();
                 const code = `CUS/${String(count + 1).padStart(5, '0')}`;
-                client = await tx.client.create({
+                client = await prisma.client.create({
                     data: {
                         code,
                         type: 'WEBSITE',
@@ -43,13 +42,13 @@ exports.createBooking = async (req, res) => {
             // 2. Optional: Create User Account
             let user = null;
             if (password) {
-                const existingUser = await tx.user.findUnique({
+                const existingUser = await prisma.user.findUnique({
                     where: { email: customerInfo.email }
                 });
 
                 if (!existingUser) {
                     const hashedPassword = await bcrypt.hash(password, 10);
-                    user = await tx.user.create({
+                    user = await prisma.user.create({
                         data: {
                             email: customerInfo.email,
                             password: hashedPassword,
@@ -61,7 +60,7 @@ exports.createBooking = async (req, res) => {
             }
 
             // 3. Create Booking
-            const booking = await tx.booking.create({
+            const booking = await prisma.booking.create({
                 data: {
                     clientId: client.id,
                     vehicleId,
@@ -73,7 +72,7 @@ exports.createBooking = async (req, res) => {
             });
 
             // 4. Create Contract
-            const contract = await tx.contract.create({
+            const contract = await prisma.contract.create({
                 data: {
                     customerId: client.id,
                     vehicleId,
@@ -92,7 +91,7 @@ exports.createBooking = async (req, res) => {
             });
 
             // 5. Create Payment
-            const payment = await tx.payment.create({
+            const payment = await prisma.payment.create({
                 data: {
                     bookingId: booking.id,
                     amount: parseFloat(paidAmount),
@@ -102,8 +101,7 @@ exports.createBooking = async (req, res) => {
                 }
             });
 
-            return { client, user, booking, contract, payment };
-        });
+            const result = { client, user, booking, contract, payment };
 
         res.status(201).json(result);
     } catch (error) {

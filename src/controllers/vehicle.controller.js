@@ -177,57 +177,61 @@ exports.createVehicle = async (req, res) => {
 
 exports.getVehicles = async (req, res) => {
     try {
-        const { brand, transmission, fuelType, status } = req.query;
+        const { brand, transmission, fuelType, status, search } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const requestedLimit = parseInt(req.query.limit) || 20;
+        const limit = Math.min(requestedLimit, 100);
+        const skip = (page - 1) * limit;
 
         const where = {};
 
         if (status) {
             where.status = status;
-        } else {
-            // Default to showing only available vehicles if not specified? 
-            // Or maybe valid ones. Let's filter by status if provided, 
-            // otherwise maybe show all or just AVAILABLE. 
-            // For public listing, usually we want AVAILABLE. 
-            // But for admin we want all. 
-            // I will leave it open if not provided, or better, handle it in frontend.
-            // Actually, the user asked for "show all vehicles". 
-            // But usually for public site "unavailable" ones shouldn't show?
-            // Let's stick to filters strictly passed.
         }
 
         if (transmission) {
             const transmissions = Array.isArray(transmission) ? transmission : [transmission];
-            where.transmission = {
-                in: transmissions
-            };
+            where.transmission = { in: transmissions };
         }
 
         if (fuelType) {
             const fuelTypes = Array.isArray(fuelType) ? fuelType : [fuelType];
-            where.fuelType = {
-                in: fuelTypes
-            };
+            where.fuelType = { in: fuelTypes };
         }
 
         if (brand) {
             const brands = Array.isArray(brand) ? brand : [brand];
             where.vehicleModel = {
                 brand: {
-                    name: {
-                        in: brands
-                    }
+                    name: { in: brands }
                 }
             };
         }
 
-        const vehicles = await prisma.vehicle.findMany({
-            where,
-            orderBy: { createdAt: 'desc' },
-            include: { 
-                vehicleModel: { include: { brand: true } },
-                fleetCategory: true
-            }
-        });
+        if (search && typeof search === 'string') {
+            const s = search.trim();
+            where.OR = [
+                { licensePlate: { contains: s, mode: 'insensitive' } },
+                { vin: { contains: s, mode: 'insensitive' } },
+                { color: { contains: s, mode: 'insensitive' } },
+                { vehicleModel: { name: { contains: s, mode: 'insensitive' } } },
+                { vehicleModel: { brand: { name: { contains: s, mode: 'insensitive' } } } }
+            ];
+        }
+
+        const [vehicles, totalCount] = await Promise.all([
+            prisma.vehicle.findMany({
+                where,
+                skip,
+                take: limit,
+                orderBy: { createdAt: 'desc' },
+                include: { 
+                    vehicleModel: { include: { brand: true } },
+                    fleetCategory: true
+                }
+            }),
+            prisma.vehicle.count({ where })
+        ]);
 
         // IMPORTANT:
         // Some deployments store images as base64 data URLs directly in DB fields (e.g. imageUrl).
@@ -252,7 +256,15 @@ exports.getVehicles = async (req, res) => {
             additionalImages: stripLargeField(v.additionalImages),
         }));
 
-        res.json(safeVehicles);
+        res.json({
+            data: safeVehicles,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
+            }
+        });
     } catch (error) {
         console.error("Get Vehicles Error:", error);
         res.status(500).json({ message: 'Failed to fetch vehicles' });

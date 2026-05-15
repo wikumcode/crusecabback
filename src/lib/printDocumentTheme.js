@@ -1,8 +1,8 @@
 /**
- * Shared styles for HTML invoice share view (browser print / PDF).
- * Keep in sync with cruisecabfront-main/src/lib/printDocumentTheme.js
+ * Shared styles for browser print / Save as PDF (quotation & invoice).
+ * Keep in sync with crusecabback-main/src/lib/documentPrintStyles.js
  */
-module.exports.DOCUMENT_PRINT_STYLES = `
+const DOCUMENT_PRINT_STYLES = `
 :root {
   --accent: #3B82F6;
   --accent-soft: #EFF6FF;
@@ -206,3 +206,13 @@ table.doc-table {
   .doc-cards { grid-template-columns: 1fr; }
 }
 `;
+
+function hasPrintBrandContent({ logoUrl, name, address, contact, whatsapp }) {
+    const t = (v) => (v && String(v).trim()) || '';
+    return !!(t(logoUrl) || t(name) || t(address) || t(contact) || t(whatsapp));
+}
+
+module.exports = {
+    DOCUMENT_PRINT_STYLES,
+    hasPrintBrandContent
+};

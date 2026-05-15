@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { sendWelcomeEmail } = require('../utils/email');
+const { getNextSequenceValue, getMongoClient } = require('../utils/sequence');
 
 // Create new customer
 exports.createClient = async (req, res) => {
@@ -14,64 +15,69 @@ exports.createClient = async (req, res) => {
             drivingLicenseFrontUrl, drivingLicenseBackUrl
         } = req.body;
 
-        // Generate Code: CUS/00001 via SystemSetting sequence
-        const sequenceRecord = await prisma.$transaction(async (tx) => {
-            let record = await tx.systemSetting.findUnique({ where: { key: 'client_sequence' } });
-            if (!record) {
-                return await tx.systemSetting.create({ data: { key: 'client_sequence', value: '1' } });
-            } else {
-                const nextVal = parseInt(record.value) + 1;
-                return await tx.systemSetting.update({
-                    where: { key: 'client_sequence' },
-                    data: { value: nextVal.toString() }
-                });
-            }
-        });
-
-        const nextNumber = parseInt(sequenceRecord.value);
+        // 1. Generate Code: CUS/00001 via sequence
+        const nextNumber = await getNextSequenceValue('client_sequence');
         const code = `CUS/${String(nextNumber).padStart(5, '0')}`;
         
-        console.log("Creating client with data:", { code, type, status, email });
+        console.log(`[CreateClient] Initiating for ${code} [${type}]`);
 
+        // 2. Prepare Data
+        const clientData = {
+            code,
+            type,
+            status: (status === 'SUBMIT' || status === 'CONFIRMED') ? 'CONFIRMED' : (status || 'DRAFT'),
+            email: (email && typeof email === 'string' && email.trim() !== "") ? email.trim() : null,
+            phone,
+            mobile,
+            address,
+            description: (req.body.description && req.body.description.trim() !== "") ? req.body.description.trim() : null,
+            name,
+            nicOrPassport,
+            passportNo,
+            drivingLicenseNo,
+            companyName,
+            brNumber,
+            contactPersonName,
+            contactPersonMobile,
+            closeRelationName,
+            closeRelationMobile,
+            userId: (req.body.userId && req.body.userId.trim() !== "") ? req.body.userId : null,
+            loyaltyPoints: parseFloat(req.body.loyaltyPoints) || 0,
+            loyaltyEnabled: req.body.loyaltyEnabled === 'true' || req.body.loyaltyEnabled === true,
+            loyaltyEarnRate: (req.body.loyaltyEarnRate && !isNaN(parseFloat(req.body.loyaltyEarnRate))) ? parseFloat(req.body.loyaltyEarnRate) : null,
+            loyaltyRedeemRate: (req.body.loyaltyRedeemRate && !isNaN(parseFloat(req.body.loyaltyRedeemRate))) ? parseFloat(req.body.loyaltyRedeemRate) : null,
+            intlDrivingLicenseFrontUrl,
+            intlDrivingLicenseBackUrl,
+            aaPermitUrl,
+            doc1Url,
+            doc2Url,
+            utilityBillUrl,
+            support1Url,
+            support2Url,
+            drivingLicenseFrontUrl,
+            drivingLicenseBackUrl
+        };
+
+        // 3. Save using Prisma (Fast, shared connection)
         const client = await prisma.client.create({
-            data: {
-                code, type, status, 
-                email: (email && typeof email === 'string' && email.trim() !== "") ? email.trim() : null, 
-                phone, mobile, address,
-                description: (req.body.description && req.body.description.trim() !== "") ? req.body.description.trim() : null,
-                name, nicOrPassport, passportNo, drivingLicenseNo,
-                companyName, brNumber, contactPersonName, contactPersonMobile,
-                closeRelationName, closeRelationMobile,
-                userId: (req.body.userId && req.body.userId.trim() !== "") ? req.body.userId : null,
-                loyaltyPoints: parseFloat(req.body.loyaltyPoints) || 0,
-                loyaltyEnabled: req.body.loyaltyEnabled === 'true' || req.body.loyaltyEnabled === true,
-                loyaltyEarnRate: (req.body.loyaltyEarnRate && !isNaN(parseFloat(req.body.loyaltyEarnRate))) ? parseFloat(req.body.loyaltyEarnRate) : null,
-                loyaltyRedeemRate: (req.body.loyaltyRedeemRate && !isNaN(parseFloat(req.body.loyaltyRedeemRate))) ? parseFloat(req.body.loyaltyRedeemRate) : null,
-                intlDrivingLicenseFrontUrl,
-                intlDrivingLicenseBackUrl,
-                aaPermitUrl,
-                doc1Url,
-                doc2Url,
-                utilityBillUrl,
-                support1Url,
-                support2Url,
-                drivingLicenseFrontUrl,
-                drivingLicenseBackUrl
-            }
+            data: clientData
         });
 
-        // Send Welcome Email asynchronously
-        if (email && typeof email === 'string' && email.trim() !== "") {
-            sendWelcomeEmail(email, name || companyName || 'Customer');
+        // 4. Async Email
+        try {
+            if (client.email) {
+                sendWelcomeEmail(client.email, client.name || client.companyName || 'Valued Customer');
+            }
+        } catch (emailError) {
+            console.error('Welcome email failed:', emailError.message);
         }
 
         res.status(201).json(client);
     } catch (error) {
-        console.error("Create Client Error:", error);
-        res.status(500).json({ 
-            message: "Failed to create customer: " + error.message, 
-            error: error.message,
-            prismaError: error.code 
+        console.error('Create Client Error:', error);
+        res.status(400).json({ 
+            message: "Failed to create customer: " + (error.message || 'Unknown error'),
+            error: error.message 
         });
     }
 };
@@ -79,10 +85,50 @@ exports.createClient = async (req, res) => {
 // Get all customers
 exports.getAllClients = async (req, res) => {
     try {
-        const clients = await prisma.client.findMany({
-            orderBy: { createdAt: 'desc' }
+        const { search, status, type } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const requestedLimit = parseInt(req.query.limit) || 20;
+        const limit = Math.min(requestedLimit, 100);
+        const skip = (page - 1) * limit;
+
+        const where = {};
+        if (status && status !== 'ALL') {
+            where.status = status;
+        }
+        if (type && type !== 'ALL') {
+            where.type = type;
+        }
+        if (search && typeof search === 'string') {
+            const s = search.trim();
+            where.OR = [
+                { name: { contains: s, mode: 'insensitive' } },
+                { companyName: { contains: s, mode: 'insensitive' } },
+                { code: { contains: s, mode: 'insensitive' } },
+                { email: { contains: s, mode: 'insensitive' } },
+                { phone: { contains: s, mode: 'insensitive' } },
+                { mobile: { contains: s, mode: 'insensitive' } }
+            ];
+        }
+
+        const [clients, totalCount] = await Promise.all([
+            prisma.client.findMany({
+                where,
+                orderBy: { code: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.client.count({ where })
+        ]);
+
+        res.json({
+            data: clients,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
+            }
         });
-        res.json(clients);
     } catch (error) {
         res.status(500).json({ message: "Failed to fetch customers" });
     }
@@ -101,6 +147,10 @@ exports.updateClient = async (req, res) => {
         if (updateData.userId === "") {
             updateData.userId = null;
         }
+        // Standardize data
+        if (updateData.email === "") {
+            updateData.email = null;
+        }
         if (updateData.description === "") {
             updateData.description = null;
         }
@@ -115,16 +165,21 @@ exports.updateClient = async (req, res) => {
             updateData.loyaltyRedeemRate = (updateData.loyaltyRedeemRate && !isNaN(parseFloat(updateData.loyaltyRedeemRate))) ? parseFloat(updateData.loyaltyRedeemRate) : null;
         }
 
+        // Use Prisma for the update
         const client = await prisma.client.update({
             where: { id },
-            data: updateData
+            data: {
+                ...updateData,
+                updatedAt: new Date()
+            }
         });
-        console.log("Update Client Success:", client);
+
+        console.log("Update Client Success:", client.id);
         res.json(client);
     } catch (error) {
         console.error("Update Client Error:", error);
         res.status(500).json({ 
-            message: "Failed to update customer: " + error.message,
+            message: "Failed to update customer: " + (error.message || 'Unknown error'),
             error: error.message
         });
     }
@@ -134,10 +189,20 @@ exports.updateClient = async (req, res) => {
 exports.deleteClient = async (req, res) => {
     try {
         const { id } = req.params;
-        await prisma.client.delete({ where: { id } });
-        res.json({ message: "Customer deleted successfully" });
+        
+        console.log(`[Delete] Permanently removing client ${id}`);
+
+        await prisma.client.delete({
+            where: { id }
+        });
+
+        res.json({ message: "Customer permanently deleted" });
     } catch (error) {
-        res.status(500).json({ message: "Failed to delete customer" });
+        console.error('Delete Client Error:', error);
+        res.status(500).json({ 
+            message: "Failed to delete customer",
+            error: error.message
+        });
     }
 };
 
@@ -201,13 +266,24 @@ exports.checkEmail = async (req, res) => {
 exports.archiveClient = async (req, res) => {
     try {
         const { id } = req.params;
+        
+        console.log(`[Archive] Processing client ${id}`);
+        
         const client = await prisma.client.update({
             where: { id },
-            data: { status: 'ARCHIVED' }
+            data: { 
+                status: 'ARCHIVED',
+                updatedAt: new Date()
+            }
         });
+
         res.json({ message: "Customer archived successfully", client });
     } catch (error) {
-        res.status(500).json({ message: "Failed to archive customer" });
+        console.error('Archive Client Error:', error);
+        res.status(500).json({ 
+            message: "Failed to archive customer", 
+            error: error.message 
+        });
     }
 };
 
@@ -216,12 +292,23 @@ exports.unarchiveClient = async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
+
+        console.log(`[Unarchive] Restoring client ${id} to status ${status || 'CONFIRMED'}`);
+
         const client = await prisma.client.update({
             where: { id },
-            data: { status: status || 'CONFIRMED' }
+            data: { 
+                status: status || 'CONFIRMED',
+                updatedAt: new Date()
+            }
         });
+
         res.json({ message: "Customer unarchived successfully", client });
     } catch (error) {
-        res.status(500).json({ message: "Failed to unarchive customer" });
+        console.error('Unarchive Client Error:', error);
+        res.status(500).json({ 
+            message: "Failed to unarchive customer",
+            error: error.message
+        });
     }
 };

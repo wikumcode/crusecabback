@@ -4,6 +4,7 @@ const contractController = require('../controllers/contractController');
 
 router.post('/', contractController.createContract);
 router.get('/', contractController.getContracts);
+router.get('/calendar', contractController.getCalendarContracts);
 router.put('/:id', contractController.updateContract);
 router.post('/:id/exchange', contractController.exchangeVehicle);
 router.put('/exchange/:exchangeId', contractController.updateExchangeChecklist);

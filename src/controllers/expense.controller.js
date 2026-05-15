@@ -2,11 +2,18 @@ const prisma = require('../lib/prisma');
 
 exports.getAllExpenses = async (req, res) => {
     try {
-        const { vehicleId, startDate, endDate } = req.query;
+        const { vehicleId, startDate, endDate, search } = req.query;
         let where = {};
 
         if (vehicleId) {
             where.vehicleId = vehicleId;
+        }
+
+        if (search) {
+            where.OR = [
+                { vehicle: { licensePlate: { contains: search, mode: 'insensitive' } } },
+                { description: { contains: search, mode: 'insensitive' } }
+            ];
         }
 
         if (startDate || endDate) {
@@ -19,24 +26,42 @@ exports.getAllExpenses = async (req, res) => {
             }
         }
 
-        const expenses = await prisma.vehicleExpense.findMany({
-            where,
-            include: {
-                vehicle: {
-                    include: {
-                        vehicleModel: {
-                            include: {
-                                brand: true
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 40;
+        const skip = (page - 1) * limit;
+
+        const [expenses, totalCount] = await Promise.all([
+            prisma.vehicleExpense.findMany({
+                where,
+                include: {
+                    vehicle: {
+                        include: {
+                            vehicleModel: {
+                                include: {
+                                    brand: true
+                                }
                             }
                         }
                     }
-                }
-            },
-            orderBy: {
-                date: 'desc'
+                },
+                orderBy: {
+                    date: 'desc'
+                },
+                skip,
+                take: limit
+            }),
+            prisma.vehicleExpense.count({ where })
+        ]);
+
+        res.json({
+            data: expenses,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
             }
         });
-        res.json(expenses);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

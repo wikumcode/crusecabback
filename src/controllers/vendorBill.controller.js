@@ -130,6 +130,9 @@ function renderVendorBillHtml(bill, company) {
   <div class="muted" style="margin-top:24px;">
     This is a system-generated settlement bill for vehicle hire and related expenses.
   </div>
+  <div class="muted" style="margin-top:8px;text-align:center;">
+    Powered by Rentix All Rights Reserved. Codebraze PVT LTD 070 2 78 78 73
+  </div>
 </body>
 </html>`;
 }
@@ -155,7 +158,7 @@ const generateBillNumber = async () => {
 
 exports.getVendorBills = async (req, res) => {
     try {
-        const { vendorId, vehicleId, status, dateRange, filterType } = req.query;
+        const { vendorId, vehicleId, status, dateRange, filterType, search } = req.query;
 
         const now = new Date();
         let start, end;
@@ -175,38 +178,62 @@ exports.getVendorBills = async (req, res) => {
             end = new Date(e);
         }
 
-        const bills = await prisma.vendorBill.findMany({
-            where: {
-                ...(vendorId && { vendorId }),
-                ...(vehicleId && { vehicleId }),
-                ...(status && { status }),
-                ...((start && end) && {
-                    createdAt: {
-                        gte: start,
-                        lte: end
-                    }
-                })
-            },
-            include: {
-                vendor: { 
-                    select: { 
-                        name: true, 
-                        email: true,
-                        vendorDetails: { select: { phone: true } }
-                    } 
-                },
-                vehicle: { select: { licensePlate: true, vehicleModel: { include: { brand: true } } } },
-                items: true,
-                maintenances: true,
-                expenses: true
-            },
-            orderBy: { createdAt: 'desc' }
-        });
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const skip = (page - 1) * limit;
 
-        // Format month name alphabetically for frontend if needed, 
-        // though frontend can also handle this with date-fns.
-        // We'll keep the raw data but the list view in frontend will format it.
-        res.json(bills);
+        const where = {
+            ...(vendorId && { vendorId }),
+            ...(vehicleId && { vehicleId }),
+            ...(status && { status }),
+            ...((start && end) && {
+                createdAt: {
+                    gte: start,
+                    lte: end
+                }
+            })
+        };
+
+        if (search) {
+            where.OR = [
+                { billNumber: { contains: search, mode: 'insensitive' } },
+                { vendor: { name: { contains: search, mode: 'insensitive' } } },
+                { vehicle: { licensePlate: { contains: search, mode: 'insensitive' } } }
+            ];
+        }
+
+        const [bills, totalCount] = await Promise.all([
+            prisma.vendorBill.findMany({
+                where,
+                include: {
+                    vendor: { 
+                        select: { 
+                            name: true, 
+                            email: true,
+                            vendorDetails: { select: { phone: true } }
+                        } 
+                    },
+                    vehicle: { select: { licensePlate: true, vehicleModel: { include: { brand: true } } } },
+                    items: true,
+                    maintenances: true,
+                    expenses: true
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.vendorBill.count({ where })
+        ]);
+
+        res.json({
+            data: bills,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
+            }
+        });
     } catch (error) {
         console.error("Get Vendor Bills Error:", error);
         res.status(500).json({ message: 'Failed to fetch vendor bills' });

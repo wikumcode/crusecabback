@@ -50,11 +50,20 @@ exports.login = async (req, res) => {
         });
         if (!user) return res.status(400).json({ message: 'Invalid credentials' });
 
+        if (!user.password) {
+            return res.status(400).json({ message: 'This account has no password set. Use password reset or contact an administrator.' });
+        }
+
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
 
+        if (!process.env.JWT_SECRET) {
+            console.error('Login error: JWT_SECRET is not set in environment');
+            return res.status(500).json({ message: 'Server misconfiguration: JWT_SECRET is missing.' });
+        }
+
         const token = jwt.sign(
-            { userId: user.id, role: user.role },
+            { id: user.id, role: user.role },
             process.env.JWT_SECRET,
             { expiresIn: '1d' }
         );
@@ -75,7 +84,13 @@ exports.login = async (req, res) => {
         });
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({ message: 'Login failed' });
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({
+                message: 'Invalid request: use a valid email address and password.',
+                errors: error.flatten(),
+            });
+        }
+        res.status(500).json({ message: error.message || 'Login failed' });
     }
 };
 exports.verifyPassword = async (req, res) => {
@@ -83,7 +98,7 @@ exports.verifyPassword = async (req, res) => {
         const { password } = req.body;
         if (!password) return res.status(400).json({ message: 'Password is required' });
 
-        const user = await prisma.user.findUnique({ where: { id: req.user.userId } });
+        const user = await prisma.user.findUnique({ where: { id: req.user.id } });
         if (!user) return res.status(404).json({ message: 'User not found' });
 
         const isMatch = await bcrypt.compare(password, user.password);

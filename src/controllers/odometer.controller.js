@@ -29,19 +29,37 @@ exports.createOdometer = async (req, res) => {
 exports.getOdometersByVehicle = async (req, res) => {
     try {
         const { vehicleId } = req.params;
-        const odometers = await prisma.odometer.findMany({
-            where: { vehicleId },
-            orderBy: { date: 'desc' },
-            include: { 
-                vehicle: {
-                    include: {
-                        vehicleModel: { include: { brand: true } },
-                        fleetCategory: true
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 40;
+        const skip = (page - 1) * limit;
+
+        const [odometers, totalCount] = await Promise.all([
+            prisma.odometer.findMany({
+                where: { vehicleId },
+                orderBy: { date: 'desc' },
+                include: { 
+                    vehicle: {
+                        include: {
+                            vehicleModel: { include: { brand: true } },
+                            fleetCategory: true
+                        }
                     }
-                }
+                },
+                skip,
+                take: limit
+            }),
+            prisma.odometer.count({ where: { vehicleId } })
+        ]);
+
+        res.json({
+            data: odometers,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
             }
         });
-        res.json(odometers);
     } catch (error) {
         console.error("Get Odometers Error:", error);
         res.status(500).json({ message: 'Failed to fetch odometer records' });
@@ -50,18 +68,36 @@ exports.getOdometersByVehicle = async (req, res) => {
 
 exports.getAllOdometers = async (req, res) => {
     try {
-        const odometers = await prisma.odometer.findMany({
-            orderBy: { date: 'desc' },
-            include: { 
-                vehicle: {
-                    include: {
-                        vehicleModel: { include: { brand: true } },
-                        fleetCategory: true
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 40;
+        const skip = (page - 1) * limit;
+
+        const [odometers, totalCount] = await Promise.all([
+            prisma.odometer.findMany({
+                orderBy: { date: 'desc' },
+                include: { 
+                    vehicle: {
+                        include: {
+                            vehicleModel: { include: { brand: true } },
+                            fleetCategory: true
+                        }
                     }
-                }
+                },
+                skip,
+                take: limit
+            }),
+            prisma.odometer.count()
+        ]);
+
+        res.json({
+            data: odometers,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
             }
         });
-        res.json(odometers);
     } catch (error) {
         console.error("Get All Odometers Error:", error);
         res.status(500).json({ message: 'Failed to fetch odometer records' });

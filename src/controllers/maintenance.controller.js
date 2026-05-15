@@ -2,23 +2,54 @@ const prisma = require('../lib/prisma');
 
 exports.getAllMaintenances = async (req, res) => {
     try {
-        const maintenances = await prisma.maintenance.findMany({
-            include: {
-                vehicle: {
-                    include: {
-                        vehicleModel: {
-                            include: {
-                                brand: true
+        const { search } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const requestedLimit = parseInt(req.query.limit) || 20;
+        const limit = Math.min(requestedLimit, 100);
+        const skip = (page - 1) * limit;
+
+        let where = {};
+        if (search) {
+            where = {
+                OR: [
+                    { vehicle: { licensePlate: { contains: search, mode: 'insensitive' } } },
+                    { description: { contains: search, mode: 'insensitive' } }
+                ]
+            };
+        }
+
+        const [maintenances, totalCount] = await Promise.all([
+            prisma.maintenance.findMany({
+                where,
+                include: {
+                    vehicle: {
+                        include: {
+                            vehicleModel: {
+                                include: {
+                                    brand: true
+                                }
                             }
                         }
                     }
-                }
-            },
-            orderBy: {
-                createdAt: 'desc'
+                },
+                orderBy: {
+                    createdAt: 'desc'
+                },
+                skip,
+                take: limit
+            }),
+            prisma.maintenance.count({ where })
+        ]);
+
+        res.json({
+            data: maintenances,
+            pagination: {
+                total: totalCount,
+                page,
+                limit,
+                totalPages: Math.ceil(totalCount / limit)
             }
         });
-        res.json(maintenances);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
