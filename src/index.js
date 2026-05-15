@@ -17,16 +17,24 @@ console.log('DATABASE_URL loaded:', !!process.env.DATABASE_URL);
 console.log('-------------------------');
 
 const allowedOrigins = new Set([
-    'https://cruisecabs.rentix.lk', // Correct Production URL
-    'https://crusecabfront.vercel.app', // Resilient URL
-    'https://cruisecabfront.vercel.app', // Resilient URL
+    'https://cruisecabs.rentix.lk',
+    'https://crusecabfront.vercel.app',
+    'https://cruisecabfront.vercel.app',
+    'https://cruisecab-front.vercel.app',
     'https://rentix-front.vercel.app',
     'https://rentix.codebraze.com',
-    'https://rentix-front-nozdp00ef-codebrazes-projects.vercel.app',
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',
 ]);
+
+// Add CLIENT_URL from .env if it exists
+if (process.env.CLIENT_URL) {
+    const clientUrl = process.env.CLIENT_URL.startsWith('http') 
+        ? process.env.CLIENT_URL 
+        : `https://${process.env.CLIENT_URL}`;
+    allowedOrigins.add(clientUrl);
+}
 
 function isDevLanOrigin(origin) {
     // Allow local dev over LAN/IP with any port (Vite picks ports dynamically).
