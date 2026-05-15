@@ -197,6 +197,20 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date() });
 });
 
+// Global Express Error Handler
+app.use((err, req, res, next) => {
+    console.error('--- UNHANDLED EXPRESS ERROR ---');
+    console.error('Path:', req.path);
+    console.error('Message:', err.message);
+    console.error('Stack:', err.stack);
+    console.error('--------------------------------');
+    
+    res.status(500).json({
+        message: 'Internal Server Error',
+        error: err.message
+    });
+});
+
 // Only start the HTTP server in local dev or Render - Vercel handles this in serverless mode
 if (!process.env.VERCEL || process.env.RENDER) {
     const server = app.listen(PORT, () => {
