@@ -39,10 +39,9 @@ console.log('MONGODB_URI loaded:', !!process.env.MONGODB_URI);
 console.log('-------------------------');
 
 const allowedOrigins = new Set([
+    'https://cruisecabs.rentix.lk',
+    'https://api-cruisecabs.rentix.lk',
     'https://tourmi-sl.vercel.app',
-    'https://tourmisl.vercel.app',
-    'https://tourmi-sl-front.vercel.app', // Added this
-    'https://tourmi-sl-back.onrender.com',
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',
