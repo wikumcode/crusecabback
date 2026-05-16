@@ -518,6 +518,7 @@ model Contract {
   updatedAt          DateTime @updatedAt
   
   vehicleExchanges   VehicleExchange[]
+  advanceReceipts    AdvanceReceipt[]
 }
 
 model Invoice {
@@ -552,6 +553,8 @@ model Invoice {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  payments      InvoicePayment[]
+  advanceReversals AdvanceReversalCredit[]
   @@unique([contractId, type])
 }
 
@@ -700,4 +703,57 @@ model VehicleExchange {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model InvoicePayment {
+  id               String          @id @default(auto()) @map("_id") @db.ObjectId
+  amount           Float
+  method           String?
+  paidAt           DateTime        @default(now())
+  
+  invoiceId        String          @db.ObjectId
+  invoice          Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  
+  advanceReceiptId String?         @db.ObjectId
+  advanceReceipt   AdvanceReceipt? @relation(fields: [advanceReceiptId], references: [id])
+
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+}
+
+model AdvanceReceipt {
+  id               String          @id @default(auto()) @map("_id") @db.ObjectId
+  receiptNo        String          @unique
+  sequence         Int
+  amount           Float
+  paymentDate      DateTime?
+  
+  contractId       String          @db.ObjectId
+  contract         Contract        @relation(fields: [contractId], references: [id])
+  
+  ledgerPostedAt   DateTime?
+  reversedAt       DateTime?
+  
+  advanceReversal  AdvanceReversalCredit?
+  linkedPayments   InvoicePayment[]
+
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+}
+
+model AdvanceReversalCredit {
+  id               String          @id @default(auto()) @map("_id") @db.ObjectId
+  rarNo            String          @unique
+  sequence         Int
+  amount           Float
+  reason           String?
+  
+  advanceReceiptId String          @unique @db.ObjectId
+  advanceReceipt   AdvanceReceipt @relation(fields: [advanceReceiptId], references: [id])
+  
+  invoiceId        String          @db.ObjectId
+  invoice          Invoice         @relation(fields: [invoiceId], references: [id])
+
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 }

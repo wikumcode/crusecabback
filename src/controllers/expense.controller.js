@@ -27,7 +27,7 @@ exports.getAllExpenses = async (req, res) => {
         }
 
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 40;
+        const limit = parseInt(req.query.limit) || 20;
         const skip = (page - 1) * limit;
 
         const [expenses, totalCount] = await Promise.all([

@@ -393,7 +393,7 @@ function renderAgreementHtml(agreement) {
 exports.listAgreements = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 40;
+        const limit = parseInt(req.query.limit) || 20;
         const skip = (page - 1) * limit;
 
         const [agreements, totalCount] = await Promise.all([

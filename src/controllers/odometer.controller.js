@@ -30,7 +30,7 @@ exports.getOdometersByVehicle = async (req, res) => {
     try {
         const { vehicleId } = req.params;
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 40;
+        const limit = parseInt(req.query.limit) || 20;
         const skip = (page - 1) * limit;
 
         const [odometers, totalCount] = await Promise.all([
@@ -69,7 +69,7 @@ exports.getOdometersByVehicle = async (req, res) => {
 exports.getAllOdometers = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 40;
+        const limit = parseInt(req.query.limit) || 20;
         const skip = (page - 1) * limit;
 
         const [odometers, totalCount] = await Promise.all([

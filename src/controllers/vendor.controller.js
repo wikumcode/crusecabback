@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 exports.getVendors = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 40;
+        const limit = parseInt(req.query.limit) || 20;
         const skip = (page - 1) * limit;
 
         const [vendors, totalCount] = await Promise.all([

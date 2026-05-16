@@ -3,6 +3,16 @@ const bcrypt = require('bcryptjs');
 const prisma = new PrismaClient();
 
 async function main() {
+    const isProduction = process.env.DATABASE_URL.includes('mongodb.net');
+    const forceRun = process.argv.includes('--force');
+
+    if (isProduction && !forceRun) {
+        console.error('\n[SAFETY ERROR] You are trying to seed a LIVE database (MongoDB Atlas)!');
+        console.error('This will DELETE your production data. Action blocked.');
+        console.error('To override this, run: node seed_now.js --force\n');
+        process.exit(1);
+    }
+
     console.log('--- Force Reseeding Rentix Demo Environment (Fixed Schema) ---');
 
     try {

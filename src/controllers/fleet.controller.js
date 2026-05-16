@@ -4,7 +4,7 @@ const prisma = require('../lib/prisma');
 exports.getBrands = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 40;
+        const limit = parseInt(req.query.limit) || 20;
         const skip = (page - 1) * limit;
 
         const [brands, totalCount] = await Promise.all([
@@ -70,7 +70,7 @@ exports.getModels = async (req, res) => {
     try {
         const { brandId } = req.query;
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 40;
+        const limit = parseInt(req.query.limit) || 20;
         const skip = (page - 1) * limit;
 
         const where = brandId ? { brandId } : {};
@@ -140,7 +140,7 @@ exports.deleteModel = async (req, res) => {
 exports.getCategories = async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 40;
+        const limit = parseInt(req.query.limit) || 20;
         const skip = (page - 1) * limit;
 
         const [categories, totalCount] = await Promise.all([

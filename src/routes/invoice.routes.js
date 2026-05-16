@@ -5,7 +5,7 @@ const invoiceController = require('../controllers/invoice.controller');
 const { authenticateToken, authorizeRoles } = require('../middleware/auth.middleware');
 
 // Admin/Staff only
-router.get('/', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.listInvoices);
+router.get('/', invoiceController.listInvoices);
 router.get('/contract/:contractId', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.getInvoiceByContract);
 router.post('/contract/:contractId/upfront', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.createUpfrontInvoiceForContract);
 router.post('/contract/:contractId/return', authenticateToken, authorizeRoles('ADMIN', 'STAFF'), invoiceController.createReturnInvoiceForContract);
