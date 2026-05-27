@@ -4,12 +4,12 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mongodb"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id        String   @id @default(cuid())
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   email     String   @unique
   password  String?
   name      String
@@ -20,7 +20,7 @@ model User {
   // bookings  Booking[] // Moved to Client model
   driverDetails DriverDetails?
 
-  permissionGroupId String?
+  permissionGroupId String?          @db.ObjectId
   permissionGroup   PermissionGroup? @relation(fields: [permissionGroupId], references: [id])
   
   vendorVehicles    Vehicle[]      @relation("VendorVehicles")
@@ -29,8 +29,8 @@ model User {
 }
 
 model VendorDetails {
-  id             String   @id @default(cuid())
-  userId         String   @unique
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String   @unique @db.ObjectId
   user           User     @relation(fields: [userId], references: [id])
   
   phone          String?
@@ -54,7 +54,7 @@ model VendorDetails {
 }
 
 model PermissionGroup {
-  id          String   @id @default(cuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   name        String   @unique
   permissions String   // JSON string of permission codes
   users       User[]
@@ -63,7 +63,7 @@ model PermissionGroup {
 }
 
 model Client {
-  id                  String   @id @default(cuid())
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
   code                String   @unique // CUS/00001
   type                String   // LOCAL, FOREIGN, CORPORATE
   status              String   @default("DRAFT") // DRAFT, PENDING_APPROVAL, CONFIRMED
@@ -106,7 +106,7 @@ model Client {
   aaPermitUrl                String?
   
   // New Fields for System Sync
-  userId              String?
+  userId              String?  @db.ObjectId
   loyaltyPoints       Float    @default(0)
   loyaltyEnabled      Boolean  @default(true)
   loyaltyEarnRate     Float?
@@ -120,15 +120,11 @@ model Client {
   invoices            Invoice[]
   ledgerEntries       LedgerEntry[]
   quotations          Quotation[]
-  agreements          Agreement[]
-
-  @@index([phone])
-  @@index([nicOrPassport])
 }
 
 model DriverDetails {
-  id             String @id @default(cuid())
-  userId         String @unique
+  id             String @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String @unique @db.ObjectId
   user           User   @relation(fields: [userId], references: [id])
   licenseNumber  String
   licenseExpiryDate DateTime?
@@ -147,15 +143,15 @@ model DriverDetails {
 }
 
 model VehicleBrand {
-  id        String         @id @default(cuid())
+  id        String         @id @default(auto()) @map("_id") @db.ObjectId
   name      String         @unique
   models    VehicleModel[]
 }
 
 model VehicleModel {
-  id        String   @id @default(cuid())
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   name      String
-  brandId   String
+  brandId   String   @db.ObjectId
   brand     VehicleBrand @relation(fields: [brandId], references: [id])
   vehicles  Vehicle[]
   
@@ -163,9 +159,9 @@ model VehicleModel {
 }
 
 model Vehicle {
-  id                    String        @id @default(cuid())
+  id                    String        @id @default(auto()) @map("_id") @db.ObjectId
   // Relation to Model (which links to Brand)
-  modelId               String?
+  modelId               String?       @db.ObjectId
   vehicleModel          VehicleModel? @relation(fields: [modelId], references: [id])
   
   year                  Int
@@ -189,10 +185,10 @@ model Vehicle {
   // New Fields
   ownership     String        @default("COMPANY") // COMPANY, THIRD_PARTY
   rentalType    String?       @default("SHORT_TERM") // SHORT_TERM, LONG_TERM
-  vendorId      String?
+  vendorId      String?       @db.ObjectId
   vendor        User?         @relation("VendorVehicles", fields: [vendorId], references: [id])
   
-  fleetCategoryId String?
+  fleetCategoryId String?      @db.ObjectId
   fleetCategory   FleetCategory? @relation(fields: [fleetCategoryId], references: [id])
 
   status        String        @default("AVAILABLE") // AVAILABLE, RENTED, MAINTENANCE, RESERVED
@@ -224,14 +220,10 @@ model Vehicle {
   expenses      VehicleExpense[]
   paymentSchedules VehiclePaymentSchedule[]
   vendorBills   VendorBill[]
-  agreements    Agreement[]
-
-  @@index([status])
-  @@index([licensePlate])
 }
 
 model FleetCategory {
-  id        String    @id @default(cuid())
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
   name      String    @unique
   sortOrder Int       @default(0)
   vehicles  Vehicle[]
@@ -240,8 +232,8 @@ model FleetCategory {
 }
 
 model Odometer {
-  id        String   @id @default(cuid())
-  vehicleId String
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId String   @db.ObjectId
   vehicle   Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   date      DateTime @default(now())
   reading   Int
@@ -251,10 +243,10 @@ model Odometer {
 }
 
 model Booking {
-  id            String        @id @default(cuid())
-  clientId      String
+  id            String        @id @default(auto()) @map("_id") @db.ObjectId
+  clientId      String        @db.ObjectId
   client        Client        @relation(fields: [clientId], references: [id])
-  vehicleId     String
+  vehicleId     String        @db.ObjectId
   vehicle       Vehicle       @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   startDate     DateTime
   endDate       DateTime
@@ -268,8 +260,8 @@ model Booking {
 }
 
 model Maintenance {
-  id          String   @id @default(cuid())
-  vehicleId   String
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId   String   @db.ObjectId
   vehicle     Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   description String
   cost        Float?   // Optional until status is DONE
@@ -280,14 +272,14 @@ model Maintenance {
   updatedAt   DateTime @updatedAt
 
   paidByCompany Boolean @default(false)
-  vendorBillId  String?
+  vendorBillId  String? @db.ObjectId
   vendorBill    VendorBill? @relation(fields: [vendorBillId], references: [id])
   isRealized    Boolean @default(false)
 }
 
 model VehicleExpense {
-  id          String   @id @default(cuid())
-  vehicleId   String
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId   String   @db.ObjectId
   vehicle     Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   description String
   amount      Float
@@ -296,14 +288,14 @@ model VehicleExpense {
   updatedAt   DateTime @updatedAt
 
   paidByCompany Boolean @default(false)
-  vendorBillId  String?
+  vendorBillId  String? @db.ObjectId
   vendorBill    VendorBill? @relation(fields: [vendorBillId], references: [id])
   isRealized    Boolean @default(false)
 }
 
 model Inspection {
-  id          String   @id @default(cuid())
-  vehicleId   String
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId   String   @db.ObjectId
   vehicle     Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   date        DateTime
   notes       String?
@@ -312,8 +304,8 @@ model Inspection {
 }
 
 model Payment {
-  id          String   @id @default(cuid())
-  bookingId   String
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  bookingId   String   @db.ObjectId
   booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   amount      Float
   method      String   // CREDIT_CARD, CASH, TRANSFER
@@ -322,56 +314,53 @@ model Payment {
 }
 
 model RentalAgreement {
-  id          String   @id @default(cuid())
-  bookingId   String   @unique
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  bookingId   String   @unique @db.ObjectId
   booking     Booking  @relation(fields: [bookingId], references: [id])
   termsAndConditions String
   signedAt    DateTime?
 }
 
 model Quotation {
-  id String @id @default(cuid())
+  id String @id @default(auto()) @map("_id") @db.ObjectId
 
   quotationNo String @unique @map("quotation_no")
   issueDate   DateTime @default(now()) @map("issue_date")
   validUntil  DateTime @map("valid_until")
 
   customerMode String @map("customer_mode") // EXISTING, NEW
-  customerId   String? @map("customer_id")
+  customerId   String? @db.ObjectId @map("customer_id")
   customer     Client? @relation(fields: [customerId], references: [id])
   customerName String @map("customer_name")
   customerEmail String? @map("customer_email")
   customerType String @map("customer_type") // LOCAL, FOREIGN, CORPORATE
 
-  vehicleId String @map("vehicle_id")
+  vehicleId String @db.ObjectId @map("vehicle_id")
   vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
 
   pickupDate DateTime @map("pickup_date")
   dropoffDate DateTime @map("dropoff_date")
-  rentalDays Float @map("rental_days")
+  rentalDays Int @map("rental_days")
   dailyRate  Float @map("daily_rate")
 
   baseAmount  Float @map("base_amount")
   extraChargesJson String @map("extra_charges_json") // JSON string [{description, amount}]
   extraAmount Float @map("extra_amount")
   totalAmount Float @map("total_amount")
-  securityDeposit Float @default(0) @map("security_deposit")
 
-  shareToken String? @unique @map("share_token")
-
-  createdByUserId String? @map("created_by_user_id")
+  createdByUserId String? @db.ObjectId @map("created_by_user_id")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 }
 
 model SystemSetting {
-  id    String @id @default(cuid())
+  id    String @id @default(auto()) @map("_id") @db.ObjectId
   key   String @unique
   value String
 }
 
 model EmailSettings {
-  id String @id @default(cuid())
+  id String @id @default(auto()) @map("_id") @db.ObjectId
 
   smtpHost   String @map("smtp_host")
   smtpPort   Int @map("smtp_port")
@@ -389,7 +378,7 @@ model EmailSettings {
 }
 
 model EmailLog {
-  id String @id @default(cuid())
+  id String @id @default(auto()) @map("_id") @db.ObjectId
 
   toEmail      String @map("to_email")
   subject      String
@@ -401,7 +390,7 @@ model EmailLog {
 }
 
 model EmailTemplate {
-  id String @id @default(cuid())
+  id String @id @default(auto()) @map("_id") @db.ObjectId
 
   templateKey     String @unique @map("template_key")
   subjectTemplate String @map("subject_template")
@@ -414,7 +403,7 @@ model EmailTemplate {
 }
 
 model District {
-  id        String   @id @default(cuid())
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   name      String   @unique
   cities    City[]
   createdAt DateTime @default(now())
@@ -422,9 +411,9 @@ model District {
 }
 
 model City {
-  id         String   @id @default(cuid())
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
   name       String
-  districtId String
+  districtId String   @db.ObjectId
   district   District @relation(fields: [districtId], references: [id])
   contracts  Contract[]
   createdAt  DateTime @default(now())
@@ -434,22 +423,20 @@ model City {
 }
 
 model Contract {
-  id                 String   @id @default(cuid())
+  id                 String   @id @default(auto()) @map("_id") @db.ObjectId
   contractNo         String?  @unique
   
   // Relations
-  customerId         String
+  customerId         String   @db.ObjectId
   customer           Client   @relation(fields: [customerId], references: [id])
-  vehicleId          String
+  vehicleId          String   @db.ObjectId
   vehicle            Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   invoices           Invoice[]
   ledgerEntries      LedgerEntry[]
   
   // Status
   status             String   @default("UPCOMING") // UPCOMING, IN_PROGRESS, RETURN, COMPLETED, CANCELLED
-  /// When false, customer-facing UPFRONT invoice fetch is hidden until released.
-  upfrontReleased    Boolean?
-
+  
   // Dates & Time
   pickupDate         DateTime
   pickupTime         String
@@ -461,8 +448,6 @@ model Contract {
   // Financials
   appliedDailyRate   Float?
   securityDeposit    Float
-  advancePaymentAmount Float?   @default(0)
-  advancePaymentDate   DateTime?
   deliveryCharge     Float? @default(0)
   dailyKmLimit       Int      @default(100)
   allocatedKm        Int      @default(100)
@@ -477,7 +462,7 @@ model Contract {
   
   // Delivery
   isDelivery         Boolean  @default(false)
-  cityId             String?
+  cityId             String?  @db.ObjectId
   city               City?    @relation(fields: [cityId], references: [id])
   isCollection       Boolean  @default(false)
   collectionCharge   Float? @default(0)
@@ -534,30 +519,22 @@ model Contract {
   
   vehicleExchanges   VehicleExchange[]
   advanceReceipts    AdvanceReceipt[]
-  agreements         Agreement[]
-
-  @@index([status])
-  @@index([pickupDate, dropoffDate])
-  @@index([customerId])
-  @@index([vehicleId])
 }
 
 model Invoice {
-  id         String   @id @default(cuid())
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
 
   // Sequencing / Identity
   invoiceNo  String   @unique
   sequence   Int      @unique
 
   // Relations
-  contractId String
+  contractId String   @db.ObjectId
   contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
-  customerId String
+  customerId String   @db.ObjectId
   customer   Client   @relation(fields: [customerId], references: [id])
-  vehicleId  String
+  vehicleId  String   @db.ObjectId
   vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-
-  shareToken String?  @unique
 
   // Type + amounts
   type       String   // UPFRONT, FINAL, etc.
@@ -578,28 +555,24 @@ model Invoice {
 
   payments      InvoicePayment[]
   advanceReversals AdvanceReversalCredit[]
-
-  @@index([createdAt(sort: Desc)])
-  @@index([status])
-  @@index([contractId])
   @@unique([contractId, type])
 }
 
 model LedgerEntry {
-  id         String   @id @default(cuid())
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
   type       String   // INCOME, LIABILITY
   amount     Float
   currency   String   @default("LKR")
   description String?
 
-  invoiceId  String
+  invoiceId  String   @db.ObjectId
   invoice    Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
-  contractId String
+  contractId String   @db.ObjectId
   contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
-  customerId String
+  customerId String   @db.ObjectId
   customer   Client   @relation(fields: [customerId], references: [id])
-  vehicleId  String
+  vehicleId  String   @db.ObjectId
   vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
 
   createdAt  DateTime @default(now())
@@ -609,11 +582,11 @@ model LedgerEntry {
 }
 
 model CreditNote {
-  id          String   @id @default(cuid())
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
   creditNoteNo String  @unique
   sequence    Int      @unique
 
-  invoiceId   String
+  invoiceId   String   @db.ObjectId
   invoice     Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   reason      String?
@@ -621,8 +594,8 @@ model CreditNote {
 }
 
 model VehiclePaymentSchedule {
-  id        String   @id @default(cuid())
-  vehicleId String
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  vehicleId String   @db.ObjectId
   vehicle   Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   startDate DateTime
   endDate   DateTime
@@ -633,11 +606,11 @@ model VehiclePaymentSchedule {
 }
 
 model VendorBill {
-  id              String   @id @default(cuid())
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
   billNumber      String?  @unique // Format: Vendor-Bill/00001
-  vendorId        String
+  vendorId        String   @db.ObjectId
   vendor          User     @relation("VendorBills", fields: [vendorId], references: [id])
-  vehicleId       String
+  vehicleId       String   @db.ObjectId
   vehicle         Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   month           Int
   year            Int
@@ -661,8 +634,8 @@ model VendorBill {
 }
 
 model VendorBillItem {
-  id           String     @id @default(cuid())
-  vendorBillId String
+  id           String     @id @default(auto()) @map("_id") @db.ObjectId
+  vendorBillId String     @db.ObjectId
   vendorBill   VendorBill @relation(fields: [vendorBillId], references: [id], onDelete: Cascade)
   description  String
   amount       Float
@@ -671,15 +644,15 @@ model VendorBillItem {
 }
 
 model VehicleExchange {
-  id String @id @default(cuid())
+  id String @id @default(auto()) @map("_id") @db.ObjectId
   
-  contractId String
+  contractId String   @db.ObjectId
   contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
   
-  oldVehicleId String
+  oldVehicleId String  @db.ObjectId
   oldVehicle   Vehicle @relation("OldVehicle", fields: [oldVehicleId], references: [id], onDelete: Cascade)
   
-  newVehicleId String?
+  newVehicleId String? @db.ObjectId
   newVehicle   Vehicle? @relation("NewVehicle", fields: [newVehicleId], references: [id], onDelete: Cascade)
   
   exchangeDate DateTime @default(now())
@@ -733,15 +706,15 @@ model VehicleExchange {
 }
 
 model InvoicePayment {
-  id               String          @id @default(cuid())
+  id               String          @id @default(auto()) @map("_id") @db.ObjectId
   amount           Float
   method           String?
   paidAt           DateTime        @default(now())
   
-  invoiceId        String
+  invoiceId        String          @db.ObjectId
   invoice          Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   
-  advanceReceiptId String?
+  advanceReceiptId String?         @db.ObjectId
   advanceReceipt   AdvanceReceipt? @relation(fields: [advanceReceiptId], references: [id])
 
   createdAt        DateTime        @default(now())
@@ -749,13 +722,13 @@ model InvoicePayment {
 }
 
 model AdvanceReceipt {
-  id               String          @id @default(cuid())
+  id               String          @id @default(auto()) @map("_id") @db.ObjectId
   receiptNo        String          @unique
   sequence         Int
   amount           Float
   paymentDate      DateTime?
   
-  contractId       String
+  contractId       String          @db.ObjectId
   contract         Contract        @relation(fields: [contractId], references: [id])
   
   ledgerPostedAt   DateTime?
@@ -769,36 +742,18 @@ model AdvanceReceipt {
 }
 
 model AdvanceReversalCredit {
-  id               String          @id @default(cuid())
+  id               String          @id @default(auto()) @map("_id") @db.ObjectId
   rarNo            String          @unique
   sequence         Int
   amount           Float
   reason           String?
   
-  advanceReceiptId String          @unique
+  advanceReceiptId String          @unique @db.ObjectId
   advanceReceipt   AdvanceReceipt @relation(fields: [advanceReceiptId], references: [id])
   
-  invoiceId        String
+  invoiceId        String          @db.ObjectId
   invoice          Invoice         @relation(fields: [invoiceId], references: [id])
 
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
-}
-
-/// Rental agreement document (AGR-…) tied to a contract — persisted separately from `RentalAgreement` (booking PDF).
-model Agreement {
-  id           String   @id @default(cuid())
-  agreementNo  String   @unique
-  sequence     Int
-  contractId   String   @unique
-  contract     Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
-  customerId   String
-  customer     Client   @relation(fields: [customerId], references: [id])
-  vehicleId    String
-  vehicle      Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  data         Json
-  status       String   @default("GENERATED")
-  shareToken   String?  @unique
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
 }

@@ -1,8 +1,7 @@
 const prisma = require('../lib/prisma');
 const jwt = require('jsonwebtoken');
 const { z } = require('zod');
-const { getMongoClient, getNextSequenceValue } = require('../utils/sequence');
-const { ObjectId } = require('mongodb');
+const { getNextSequenceValue } = require('../utils/sequence');
 const invoiceCtrl = require('./invoice.controller');
 const { DOCUMENT_PRINT_STYLES } = require('../lib/documentPrintStyles');
 const { formatDate, formatDateTime } = require('../lib/dates');
@@ -47,13 +46,7 @@ function getBackendBaseUrlFromReq(req) {
     const protocol = req.protocol || 'https';
     const host = req.headers.host;
     if (host) return `${protocol}://${host}`;
-    const origin = req.headers.origin || req.headers.referer;
-    if (!origin) return 'http://localhost:5000';
-    try {
-        return new URL(origin).origin;
-    } catch {
-        return 'http://localhost:5000';
-    }
+    return 'http://localhost:5000';
 }
 
 function buildAdvanceReceiptShareLink(req, receiptId) {
@@ -448,14 +441,6 @@ exports.issueAdvanceReceipt = async (req, res) => {
         const issueDate = new Date();
         const seqKey = advanceReceiptSeqKey(issueDate);
 
-        // Native Driver setup
-        const client = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = client.db(dbName);
-
-        const receiptCollection = db.collection('AdvanceReceipt');
-        const contractCollection = db.collection('Contract');
-
         const contract = await prisma.contract.findUnique({
             where: { id: contractId },
         });
@@ -496,61 +481,61 @@ exports.issueAdvanceReceipt = async (req, res) => {
             );
         }
 
-        // Native Driver for atomic sequence update
-        const next = await getNextSequenceValue(seqKey);
-        const receiptNo = buildReceiptNo(next, issueDate);
+        const receiptId = await prisma.$transaction(
+            async (tx) => {
+                const next = await getNextSequenceValue(seqKey);
+                const receiptNo = buildReceiptNo(next, issueDate);
 
-        // Native Insert for AdvanceReceipt
-        const receiptDoc = {
-            receiptNo,
-            sequence: next,
-            amount: amt,
-            paymentDate: paymentDate ? new Date(paymentDate) : null,
-            contractId: new ObjectId(contractId),
-            createdAt: new Date(),
-            updatedAt: new Date()
-        };
-        const receiptResult = await receiptCollection.insertOne(receiptDoc);
-        const receiptId = receiptResult.insertedId.toString();
+                const rec = await tx.advanceReceipt.create({
+                    data: {
+                        receiptNo,
+                        sequence: next,
+                        amount: amt,
+                        paymentDate: paymentDate ? new Date(paymentDate) : null,
+                        contract: { connect: { id: contractId } },
+                    },
+                });
 
-        // Native Ensure Upfront Invoice
-        const inv = await invoiceCtrl.ensureUpfrontInvoiceNative(db, contractId, contract, 'LKR');
-        if (!inv) throw new Error('Could not prepare upfront invoice');
+                const inv = await invoiceCtrl.ensureUpfrontInvoiceInTx(tx, contractId, contract, 'LKR');
+                if (!inv) throw new Error('Could not prepare upfront invoice');
 
-        const paidSum = invoiceCtrl.sumPaymentsTowardBalance(inv);
-        const netTotal = invoiceCtrl.roundMoney(Number(inv.total || 0));
-        const remaining = invoiceCtrl.roundMoney(netTotal - paidSum);
-        const lines = Array.isArray(inv.lines) ? inv.lines : [];
-        const advanceLine = lines.find((l) => l?.code === 'ADVANCE_PAID');
-        const advanceOnInvoice = advanceLine ? Math.abs(Number(advanceLine.amount || 0)) : 0;
+                const paidSum = invoiceCtrl.sumPaymentsTowardBalance(inv);
+                const netTotal = invoiceCtrl.roundMoney(Number(inv.total || 0));
+                const remaining = invoiceCtrl.roundMoney(netTotal - paidSum);
+                const lines = Array.isArray(inv.lines) ? inv.lines : [];
+                const advanceLine = lines.find((l) => l?.code === 'ADVANCE_PAID');
+                const advanceOnInvoice = advanceLine ? Math.abs(Number(advanceLine.amount || 0)) : 0;
 
-        if (remaining <= invoiceCtrl.MONEY_EPS && advanceOnInvoice > invoiceCtrl.MONEY_EPS) {
-            if (amt > advanceOnInvoice + invoiceCtrl.MONEY_EPS) {
-                throw new Error(
-                    `Advance amount exceeds the advance on the invoice (${advanceOnInvoice}). Save the contract so the invoice matches, or reduce the amount.`,
-                );
-            }
-        } else if (amt > remaining + invoiceCtrl.MONEY_EPS) {
-            throw new Error(`Advance amount exceeds balance due (${remaining}).`);
-        }
+                if (remaining <= invoiceCtrl.MONEY_EPS && advanceOnInvoice > invoiceCtrl.MONEY_EPS) {
+                    if (amt > advanceOnInvoice + invoiceCtrl.MONEY_EPS) {
+                        throw new Error(
+                            `Advance amount exceeds the advance on the invoice (${advanceOnInvoice}). Save the contract so the invoice matches, or reduce the amount.`,
+                        );
+                    }
+                } else if (amt > remaining + invoiceCtrl.MONEY_EPS) {
+                    throw new Error(`Advance amount exceeds balance due (${remaining}).`);
+                }
 
-        // Native Apply Payment
-        await invoiceCtrl.applyUpfrontPaymentNative(db, inv, amt, 'ADVANCE_RECEIPT', {
-            advanceReceiptId: receiptId,
-        });
+                await invoiceCtrl.applyUpfrontPaymentInTx(tx, inv, amt, 'ADVANCE_RECEIPT', {
+                    advanceReceiptId: rec.id,
+                });
 
-        // Native Update Receipt
-        await receiptCollection.updateOne(
-            { _id: new ObjectId(receiptId) },
-            { $set: { ledgerPostedAt: new Date(), updatedAt: new Date() } }
+                await tx.advanceReceipt.update({
+                    where: { id: rec.id },
+                    data: { ledgerPostedAt: new Date() },
+                });
+
+                if (contract.status === 'UPCOMING') {
+                    await tx.contract.update({
+                        where: { id: contractId },
+                        data: { upfrontReleased: false },
+                    });
+                }
+
+                return rec.id;
+            },
+            TX_OPTS_ISSUE,
         );
-
-        if (contract.status === 'UPCOMING') {
-            await contractCollection.updateOne(
-                { _id: new ObjectId(contractId) },
-                { $set: { upfrontReleased: false, updatedAt: new Date() } }
-            );
-        }
 
         const receipt = await prisma.advanceReceipt.findUnique({
             where: { id: receiptId },
@@ -692,17 +677,6 @@ exports.reverseAdvanceReceipt = async (req, res) => {
         const { id } = req.params;
         const { reason } = reverseSchema.parse(req.body || {});
 
-        // Native Driver setup
-        const client = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = client.db(dbName);
-
-        const receiptCollection = db.collection('AdvanceReceipt');
-        const reversalCollection = db.collection('AdvanceReversalCredit');
-        const ledgerCollection = db.collection('LedgerEntry');
-        const paymentCollection = db.collection('InvoicePayment');
-        const invoiceCollection = db.collection('Invoice');
-
         const receipt = await prisma.advanceReceipt.findUnique({
             where: { id },
             include: receiptInclude,
@@ -714,10 +688,6 @@ exports.reverseAdvanceReceipt = async (req, res) => {
         const payment = firstLinkedPayment(receipt);
         if (!payment) throw new Error('No linked invoice payment for this receipt.');
 
-        const invoice = await prisma.invoice.findUnique({
-            where: { id: payment.id ? (payment.invoiceId || receipt.contractId) : payment.invoiceId }, // Simplified fallback
-        });
-        // Correcting invoice lookup: payment.invoiceId is the source of truth
         const actualInvoice = await prisma.invoice.findUnique({
             where: { id: payment.invoiceId },
         });
@@ -739,65 +709,66 @@ exports.reverseAdvanceReceipt = async (req, res) => {
                 : ordered.slice(0, idx).reduce((s, p) => s + Number(p.amount || 0), 0);
         const { income, liability } = invoiceCtrl.computeDepositFirstLedgerSplit(deposit, priorCash, payAmt);
 
-        if (income > invoiceCtrl.MONEY_EPS) {
-            await ledgerCollection.insertOne({
-                type: 'INCOME',
-                amount: -Math.abs(income),
-                currency: actualInvoice.currency || 'LKR',
-                description: `RAR reversal — advance receipt ${receipt.receiptNo} (income offset)`,
-                invoiceId: new ObjectId(actualInvoice.id),
-                contractId: new ObjectId(actualInvoice.contractId),
-                customerId: new ObjectId(actualInvoice.customerId),
-                vehicleId: new ObjectId(actualInvoice.vehicleId),
-                createdAt: new Date(),
-                updatedAt: new Date()
-            });
-        }
-        if (Math.abs(liability) > invoiceCtrl.MONEY_EPS) {
-            await ledgerCollection.insertOne({
-                type: 'LIABILITY',
-                amount: -Math.abs(liability),
-                currency: actualInvoice.currency || 'LKR',
-                description: `RAR reversal — advance receipt ${receipt.receiptNo} (liability offset)`,
-                invoiceId: new ObjectId(actualInvoice.id),
-                contractId: new ObjectId(actualInvoice.contractId),
-                customerId: new ObjectId(actualInvoice.customerId),
-                vehicleId: new ObjectId(actualInvoice.vehicleId),
-                createdAt: new Date(),
-                updatedAt: new Date()
-            });
-        }
+        const fullReversal = await prisma.$transaction(
+            async (tx) => {
+                if (income > invoiceCtrl.MONEY_EPS) {
+                    await tx.ledgerEntry.create({
+                        data: {
+                            type: 'INCOME',
+                            amount: -Math.abs(income),
+                            currency: actualInvoice.currency || 'LKR',
+                            description: `RAR reversal — advance receipt ${receipt.receiptNo} (income offset)`,
+                            invoice: { connect: { id: actualInvoice.id } },
+                            contract: { connect: { id: actualInvoice.contractId } },
+                            customer: { connect: { id: actualInvoice.customerId } },
+                            vehicle: { connect: { id: actualInvoice.vehicleId } },
+                        },
+                    });
+                }
+                if (Math.abs(liability) > invoiceCtrl.MONEY_EPS) {
+                    await tx.ledgerEntry.create({
+                        data: {
+                            type: 'LIABILITY',
+                            amount: -Math.abs(liability),
+                            currency: actualInvoice.currency || 'LKR',
+                            description: `RAR reversal — advance receipt ${receipt.receiptNo} (liability offset)`,
+                            invoice: { connect: { id: actualInvoice.id } },
+                            contract: { connect: { id: actualInvoice.contractId } },
+                            customer: { connect: { id: actualInvoice.customerId } },
+                            vehicle: { connect: { id: actualInvoice.vehicleId } },
+                        },
+                    });
+                }
 
-        await paymentCollection.deleteOne({ _id: new ObjectId(payment.id) });
-        await invoiceCtrl.refreshInvoicePaidStatusNative(db, actualInvoice.id);
+                await tx.invoicePayment.delete({ where: { id: payment.id } });
+                await invoiceCtrl.refreshInvoicePaidStatusInTx(tx, actualInvoice.id);
 
-        const issueDate = new Date();
-        const rk = rarSeqKey(issueDate);
-        
-        // Native Driver for atomic sequence update
-        const nxt = await getNextSequenceValue(rk);
-        const rarNo = buildRarNo(nxt, issueDate);
+                const issueDate = new Date();
+                const rk = rarSeqKey(issueDate);
+                const nxt = await getNextSequenceValue(rk);
+                const rarNo = buildRarNo(nxt, issueDate);
 
-        const reversalDoc = {
-            rarNo,
-            sequence: nxt,
-            amount: payAmt,
-            reason: reason || null,
-            advanceReceiptId: new ObjectId(receipt.id),
-            invoiceId: new ObjectId(actualInvoice.id),
-            createdAt: new Date(),
-            updatedAt: new Date()
-        };
-        const reversalResult = await reversalCollection.insertOne(reversalDoc);
+                const reversal = await tx.advanceReversalCredit.create({
+                    data: {
+                        rarNo,
+                        sequence: nxt,
+                        amount: payAmt,
+                        reason: reason || null,
+                        advanceReceipt: { connect: { id: receipt.id } },
+                        invoice: { connect: { id: actualInvoice.id } },
+                    },
+                });
 
-        await receiptCollection.updateOne(
-            { _id: new ObjectId(receipt.id) },
-            { $set: { reversedAt: new Date(), updatedAt: new Date() } }
+                await tx.advanceReceipt.update({
+                    where: { id: receipt.id },
+                    data: { reversedAt: new Date() },
+                });
+
+                return reversal;
+            },
+            TX_OPTS_REVERSE,
         );
 
-        const fullReversal = await prisma.advanceReversalCredit.findUnique({ 
-            where: { id: reversalResult.insertedId.toString() } 
-        });
         const fullReceipt = await prisma.advanceReceipt.findUnique({
             where: { id: receipt.id },
             include: receiptInclude,
@@ -832,6 +803,42 @@ exports.getReversalHtml = async (req, res) => {
     }
 };
 
+async function sendAdvanceReceiptHtml(req, res, receipt) {
+    const company = await invoiceCtrl.getCompanyProfileFromSettings();
+    const baseUrl = getBackendBaseUrlFromReq(req);
+    const html = renderAdvanceReceiptHtml(receipt, company, baseUrl);
+    const shouldPrint = String(req.query?.download || '').toLowerCase() === '1';
+    if (!shouldPrint) {
+        return res.type('text/html').send(html);
+    }
+
+    const printInjectedHtml = html.replace(
+        '</body>',
+        `<script>
+                function waitForImages() {
+                    var images = Array.prototype.slice.call(document.images || []);
+                    if (!images.length) return Promise.resolve();
+                    return Promise.all(images.map(function (img) {
+                        if (img.complete) return Promise.resolve();
+                        return new Promise(function (resolve) {
+                            img.onload = resolve;
+                            img.onerror = resolve;
+                        });
+                    }));
+                }
+
+                window.addEventListener('load', function () {
+                    waitForImages().then(function () {
+                        setTimeout(function () {
+                            window.print();
+                        }, 250);
+                    });
+                });
+            </script></body>`,
+    );
+    return res.type('text/html').send(printInjectedHtml);
+}
+
 exports.getSharedAdvanceReceipt = async (req, res) => {
     try {
         const { id } = req.params;
@@ -855,9 +862,7 @@ exports.getSharedAdvanceReceipt = async (req, res) => {
         });
         if (!receipt) return res.status(404).send('Receipt not found');
 
-        const company = await invoiceCtrl.getCompanyProfileFromSettings();
-        const baseUrl = getBackendBaseUrlFromReq(req);
-        res.type('text/html').send(renderAdvanceReceiptHtml(receipt, company, baseUrl));
+        return sendAdvanceReceiptHtml(req, res, receipt);
     } catch (error) {
         console.error('Shared advance receipt error:', error);
         res.status(500).send('Failed to load receipt');

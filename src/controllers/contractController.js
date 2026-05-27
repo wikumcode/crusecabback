@@ -1,7 +1,6 @@
 const prisma = require('../lib/prisma');
 const { z } = require('zod');
-const { getNextSequenceValue, getMongoClient } = require('../utils/sequence');
-const { ObjectId } = require('mongodb');
+const { getNextSequenceValue } = require('../utils/sequence');
 
 /**
  * Mongo Atlas cold-start latency easily blows past Prisma's default 5s
@@ -72,6 +71,17 @@ function combineDateAndTime(dateVal, timeStr) {
 function minutesDiff(a, b) {
     // returns b - a in minutes (can be negative)
     return (b.getTime() - a.getTime()) / (1000 * 60);
+}
+
+const MS_PER_RENTAL_DAY = 24 * 60 * 60 * 1000;
+
+function computeRentalDayUnits(pickupDate, pickupTime, dropoffDate, dropoffTime) {
+    const start = combineDateAndTime(pickupDate, pickupTime);
+    const end = combineDateAndTime(dropoffDate, dropoffTime);
+    if (!start || !end) return null;
+    const ms = end.getTime() - start.getTime();
+    if (!Number.isFinite(ms) || ms <= 0) return null;
+    return ms / MS_PER_RENTAL_DAY;
 }
 
 const contractSchema = z.object({
@@ -244,49 +254,44 @@ exports.createContract = async (req, res) => {
             });
         }
 
-        // Calculate Allocated KM
-        const days = Math.max(1, Math.ceil((data.dropoffDate - data.pickupDate) / (1000 * 60 * 60 * 24)));
-        data.allocatedKm = data.dailyKmLimit * days;
+        const rentalDayUnits = computeRentalDayUnits(
+            data.pickupDate,
+            data.pickupTime,
+            data.dropoffDate,
+            data.dropoffTime
+        );
+        if (rentalDayUnits == null) {
+            return res.status(400).json({ message: 'Drop-off must be after pick-up date and time.' });
+        }
+        data.allocatedKm = Math.round(data.dailyKmLimit * rentalDayUnits);
 
         const now = new Date();
         const key = contractSeqKey(now);
 
-        // 1. Get next sequence (Native, bypasses replica set requirement)
         const next = await getNextSequenceValue(key);
         const contractNo = buildContractNo(next, now);
 
-        // 2. Prepare document for Native MongoDB insert
-        const doc = {
-            ...data,
-            status: 'UPCOMING',
-            contractNo,
-            createdAt: now,
-            updatedAt: now
-        };
+        const { advancePaymentAmount, advancePaymentDate, customerId, vehicleId, cityId, ...scalarFields } = data;
 
-        // Convert string IDs to ObjectIds for MongoDB compatibility
-        if (doc.customerId) doc.customerId = new ObjectId(doc.customerId);
-        if (doc.vehicleId) doc.vehicleId = new ObjectId(doc.vehicleId);
-        if (doc.cityId) doc.cityId = new ObjectId(doc.cityId);
+        const created = await prisma.contract.create({
+            data: {
+                ...scalarFields,
+                status: 'UPCOMING',
+                contractNo,
+                advancePaymentAmount: advancePaymentAmount ?? 0,
+                advancePaymentDate: advancePaymentDate || null,
+                customer: { connect: { id: customerId } },
+                vehicle: { connect: { id: vehicleId } },
+                ...(cityId ? { city: { connect: { id: cityId } } } : {}),
+            },
+            include: {
+                customer: true,
+                vehicle: { include: { vehicleModel: { include: { brand: true } } } },
+                city: { include: { district: true } },
+            },
+        });
 
-        // 3. Insert using Native Driver
-        const client = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = client.db(dbName);
-        const contractCollection = db.collection('Contract');
-
-        const result = await contractCollection.insertOne(doc);
-        
-        // Prepare response (returning id as string to match Prisma output)
-        const contract = { 
-            ...doc, 
-            id: result.insertedId.toString(),
-            customerId: doc.customerId.toString(),
-            vehicleId: doc.vehicleId.toString(),
-            cityId: doc.cityId ? doc.cityId.toString() : null
-        };
-
-        res.status(201).json(contract);
+        res.status(201).json(created);
     } catch (error) {
         console.error("Create Contract Error:", error);
         if (error instanceof z.ZodError) {
@@ -522,15 +527,18 @@ exports.updateContract = async (req, res) => {
             }
         }
 
-        // Recalculate Allocated KM if dates or limit changed
-        if (data.pickupDate || data.dropoffDate || data.dailyKmLimit) {
+        // Recalculate allocated KM from exact rental period (24h day-units)
+        if (data.pickupDate || data.dropoffDate || data.pickupTime || data.dropoffTime || data.dailyKmLimit) {
             const currentContract = await prisma.contract.findUnique({ where: { id } });
             const pickup = data.pickupDate || currentContract.pickupDate;
             const dropoff = data.dropoffDate || currentContract.dropoffDate;
-            const limit = data.dailyKmLimit || currentContract.dailyKmLimit;
-
-            const days = Math.max(1, Math.ceil((new Date(dropoff) - new Date(pickup)) / (1000 * 60 * 60 * 24)));
-            data.allocatedKm = limit * days;
+            const pickupTime = data.pickupTime || currentContract.pickupTime;
+            const dropoffTime = data.dropoffTime || currentContract.dropoffTime;
+            const limit = data.dailyKmLimit ?? currentContract.dailyKmLimit;
+            const rentalDayUnits = computeRentalDayUnits(pickup, pickupTime, dropoff, dropoffTime);
+            if (rentalDayUnits != null) {
+                data.allocatedKm = Math.round(limit * rentalDayUnits);
+            }
         }
 
         // Start-odometer integrity for UPCOMING / IN_PROGRESS edits.
@@ -577,75 +585,42 @@ exports.updateContract = async (req, res) => {
             }
         }
 
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
-        const contractCollection = db.collection('Contract');
+        const updateData = { ...data, status };
+        Object.keys(updateData).forEach((key) => {
+            if (updateData[key] === undefined) delete updateData[key];
+        });
 
-        console.log("Updating contract ID:", id, "with data fields count:", Object.keys(data).length);
-        
-        // Chunked update to bypass "Pipeline length greater than 50" (P2010) error.
-        const allKeys = Object.keys(data);
-        const chunkSize = 10;
-        let lastResult = null;
+        await prisma.contract.update({
+            where: { id },
+            data: updateData,
+        });
 
-        for (let i = 0; i < allKeys.length; i += chunkSize) {
-            const chunkKeys = allKeys.slice(i, i + chunkSize);
-            const chunkUpdate = { $set: { updatedAt: new Date() } };
-            chunkKeys.forEach(k => chunkUpdate.$set[k] = data[k]);
-            
-            if (i === 0) chunkUpdate.$set.status = status;
-
-            lastResult = await contractCollection.findOneAndUpdate(
-                { _id: new ObjectId(id) },
-                chunkUpdate,
-                { returnDocument: 'after' }
-            );
-        }
-
-        if (allKeys.length === 0) {
-            lastResult = await contractCollection.findOneAndUpdate(
-                { _id: new ObjectId(id) },
-                { $set: { status, updatedAt: new Date() } },
-                { returnDocument: 'after' }
-            );
-        }
-
-        const contract = lastResult.value || lastResult; // value for older drivers, result for newer
-        // Ensure contract is object
+        const contract = await prisma.contract.findUnique({ where: { id } });
         if (!contract) throw new Error('Contract update failed or not found');
 
-        // Status Transition Logic — all writes use native driver to avoid P2031 on standalone MongoDB
-        const vehicleCollection = db.collection('Vehicle');
-        const odometerCollection = db.collection('Odometer');
-
         if (status === 'IN_PROGRESS') {
-            // SYNC: Ensure Start Odometer matches the latest vehicle reading (Handover Sync)
             const vehicle = await prisma.vehicle.findUnique({ where: { id: contract.vehicleId } });
             const currentStartOdo = Number(data.startOdometer || contract.startOdometer) || 0;
             const latestVehicleOdo = Number(vehicle?.lastOdometer) || 0;
 
             if (latestVehicleOdo > currentStartOdo) {
-                await contractCollection.updateOne(
-                    { _id: new ObjectId(contract._id || id) },
-                    { $set: { startOdometer: latestVehicleOdo, updatedAt: new Date() } }
-                );
+                await prisma.contract.update({
+                    where: { id: contract.id },
+                    data: { startOdometer: latestVehicleOdo },
+                });
             }
 
-            await vehicleCollection.updateOne(
-                { _id: new ObjectId(contract.vehicleId) },
-                { $set: { status: 'RENTED', updatedAt: new Date() } }
-            );
+            await prisma.vehicle.update({
+                where: { id: contract.vehicleId },
+                data: { status: 'RENTED' },
+            });
         } else if (status === 'RETURN' || status === 'COMPLETED' || status === 'CANCELLED') {
             const currentContract = await prisma.contract.findUnique({ where: { id } });
 
-            // Calculate Extra KM Cost
             let extraKmCost = 0;
             let extraDayCharge = 0;
             let extraTimeRemainderCharge = 0;
 
-            // Late return day/time charges + mileage coverage both depend on overtime minutes.
-            // We compute overtime first; mileage extra is only possible if endOdometer is provided.
             if (status === 'COMPLETED') {
                 const scheduledEnd = combineDateAndTime(currentContract.dropoffDate, currentContract.dropoffTime);
                 const actualEnd = combineDateAndTime(
@@ -656,10 +631,8 @@ exports.updateContract = async (req, res) => {
                 let overtimeMinutesCeil = 0;
                 if (scheduledEnd && actualEnd && actualEnd.getTime() > scheduledEnd.getTime()) {
                     const overtimeMinutes = Math.max(0, minutesDiff(scheduledEnd, actualEnd));
-                    // Round up so any late minutes count as billable extra time.
                     overtimeMinutesCeil = Math.ceil(overtimeMinutes);
 
-                    // Late return day/time charges (based on daily rate)
                     const dailyRate = Number(currentContract.appliedDailyRate) || 0;
                     const extraDays = Math.floor(overtimeMinutesCeil / 1440);
                     const remMinutes = overtimeMinutesCeil - extraDays * 1440;
@@ -676,8 +649,6 @@ exports.updateContract = async (req, res) => {
                     const usedKm = endOdo - startOdo;
                     let coveredKm = allocated;
 
-                    // Late time also covers extra mileage proportionally
-                    // (dailyKmLimit * overtimeMinutes / 1440), rounded to nearest km.
                     if (overtimeMinutesCeil > 0) {
                         const dailyKm = Number(currentContract.dailyKmLimit) || 0;
                         const extraCoverageKm = Math.round(dailyKm * (overtimeMinutesCeil / (24 * 60)));
@@ -692,70 +663,56 @@ exports.updateContract = async (req, res) => {
                 }
             }
 
-            // ONLY if it's not already something else?
-            // User requirement: "contract is returned, then vehicle status goes to Available status"
-            // Also good to handle Cancelled to free up the vehicle if it was reserved.
-            const vehicleUpdateFields = { status: 'AVAILABLE', updatedAt: new Date() };
-            if (data.endOdometer !== undefined) vehicleUpdateFields.lastOdometer = data.endOdometer;
+            const vehicleData = { status: 'AVAILABLE' };
+            if (data.endOdometer !== undefined) vehicleData.lastOdometer = data.endOdometer;
 
-            await vehicleCollection.updateOne(
-                { _id: new ObjectId(contract.vehicleId) },
-                { $set: vehicleUpdateFields }
-            );
+            await prisma.vehicle.update({
+                where: { id: contract.vehicleId },
+                data: vehicleData,
+            });
 
-            // Update contract with extra cost
-            await contractCollection.updateOne(
-                { _id: new ObjectId(id) },
-                { $set: { extraKmCost, updatedAt: new Date() } }
-            );
+            await prisma.contract.update({
+                where: { id },
+                data: { extraKmCost },
+            });
 
             if (
                 data.endOdometer !== undefined &&
-                (
-                    previousContract?.endOdometer !== data.endOdometer ||
-                    previousStatus !== status
-                )
+                (previousContract?.endOdometer !== data.endOdometer || previousStatus !== status)
             ) {
                 const finalEndOdo = Number(data.endOdometer) || 0;
 
-                await odometerCollection.insertOne({
-                    vehicleId: new ObjectId(contract.vehicleId),
-                    reading: finalEndOdo,
-                    source: 'CONTRACT_END',
-                    createdAt: new Date(),
-                    updatedAt: new Date()
+                await prisma.odometer.create({
+                    data: {
+                        vehicleId: contract.vehicleId,
+                        reading: finalEndOdo,
+                        source: 'CONTRACT_END',
+                    },
                 });
 
-                // FUTURE PROPAGATION: Update the next chronological upcoming booking
                 const nextContract = await prisma.contract.findFirst({
                     where: {
                         vehicleId: contract.vehicleId,
                         status: 'UPCOMING',
                         pickupDate: { gte: contract.dropoffDate },
-                        id: { not: contract.id }
+                        id: { not: contract.id },
                     },
-                    orderBy: { pickupDate: 'asc' }
+                    orderBy: { pickupDate: 'asc' },
                 });
 
                 if (nextContract) {
-                    await contractCollection.updateOne(
-                        { _id: new ObjectId(nextContract.id) },
-                        { $set: { startOdometer: finalEndOdo, updatedAt: new Date() } }
-                    );
+                    await prisma.contract.update({
+                        where: { id: nextContract.id },
+                        data: { startOdometer: finalEndOdo },
+                    });
                 }
             }
 
-            // Settlement: late return extra charges come from security deposit liability
-            // and become vehicle INCOME (only on the first transition into COMPLETED).
             if (status === 'COMPLETED' && previousStatus !== 'COMPLETED') {
-                // Must target UPFRONT (contract can have UPFRONT + RETURN); findUnique by contractId alone is invalid.
                 const invoice = await prisma.invoice.findFirst({
                     where: { contractId: id, type: 'UPFRONT' },
                 });
                 if (invoice) {
-                    const client = await getMongoClient();
-                    const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-                    const db = client.db(dbName);
                     const damageCharge = Number(currentContract.damageCharge) || 0;
                     const otherChargeAmount = Number(currentContract.otherChargeAmount) || 0;
                     const lateExtrasTotal =
@@ -765,61 +722,49 @@ exports.updateContract = async (req, res) => {
                         damageCharge +
                         otherChargeAmount;
 
-                    const collectionChargeAmount = (currentContract.isCollection || Number(currentContract.collectionCharge) > 0)
-                        ? (Number(currentContract.collectionCharge) || 0)
-                        : 0;
-                    // Always apply income for late extras on contract completion.
-                    // Invoice "paid" status handling is managed by the invoice payment flow,
-                    // but completion must ensure P&L reflects final charges.
+                    const collectionChargeAmount =
+                        currentContract.isCollection || Number(currentContract.collectionCharge) > 0
+                            ? Number(currentContract.collectionCharge) || 0
+                            : 0;
                     const extraChargesTotal = lateExtrasTotal + collectionChargeAmount;
 
-                    const ledgerCollection = db.collection('LedgerEntry');
-
-                    // 1. Clear existing deposit liability for this contract/invoice (Native Aggregate)
-                    const liabilityMatches = await ledgerCollection.aggregate([
-                        { 
-                            $match: { 
-                                contractId: new ObjectId(id), 
-                                invoiceId: new ObjectId(invoice.id), 
-                                type: 'LIABILITY' 
-                            } 
-                        },
-                        { 
-                            $group: { 
-                                _id: null, 
-                                total: { $sum: "$amount" } 
-                            } 
-                        }
-                    ]).toArray();
-
-                    const currentLiability = liabilityMatches.length > 0 ? Number(liabilityMatches[0].total || 0) : 0;
-                    
-                    if (currentLiability !== 0) {
-                        await ledgerCollection.insertOne({
+                    const agg = await prisma.ledgerEntry.aggregate({
+                        where: {
+                            contractId: id,
+                            invoiceId: invoice.id,
                             type: 'LIABILITY',
-                            amount: -currentLiability,
-                            currency: invoice.currency || 'LKR',
-                            description: `Security deposit settled on return for ${currentContract.contractNo || ''}`.trim(),
-                            invoiceId: new ObjectId(invoice.id),
-                            contractId: new ObjectId(id),
-                            customerId: new ObjectId(currentContract.customerId),
-                            vehicleId: new ObjectId(contract.vehicleId),
-                            createdAt: new Date()
+                        },
+                        _sum: { amount: true },
+                    });
+                    const currentLiability = Number(agg._sum.amount || 0);
+
+                    if (currentLiability !== 0) {
+                        await prisma.ledgerEntry.create({
+                            data: {
+                                type: 'LIABILITY',
+                                amount: -currentLiability,
+                                currency: invoice.currency || 'LKR',
+                                description: `Security deposit settled on return for ${currentContract.contractNo || ''}`.trim(),
+                                invoice: { connect: { id: invoice.id } },
+                                contract: { connect: { id } },
+                                customer: { connect: { id: currentContract.customerId } },
+                                vehicle: { connect: { id: contract.vehicleId } },
+                            },
                         });
                     }
 
-                    // 2. Record Late Extra Income (Native Insert)
                     if (extraChargesTotal > 0) {
-                        await ledgerCollection.insertOne({
-                            type: 'INCOME',
-                            amount: extraChargesTotal,
-                            currency: invoice.currency || 'LKR',
-                            description: `Late return extra charges income for ${currentContract.contractNo || ''}`.trim(),
-                            invoiceId: new ObjectId(invoice.id),
-                            contractId: new ObjectId(id),
-                            customerId: new ObjectId(currentContract.customerId),
-                            vehicleId: new ObjectId(contract.vehicleId),
-                            createdAt: new Date()
+                        await prisma.ledgerEntry.create({
+                            data: {
+                                type: 'INCOME',
+                                amount: extraChargesTotal,
+                                currency: invoice.currency || 'LKR',
+                                description: `Late return extra charges income for ${currentContract.contractNo || ''}`.trim(),
+                                invoice: { connect: { id: invoice.id } },
+                                contract: { connect: { id } },
+                                customer: { connect: { id: currentContract.customerId } },
+                                vehicle: { connect: { id: contract.vehicleId } },
+                            },
                         });
                     }
                 }
@@ -884,88 +829,69 @@ exports.exchangeVehicle = async (req, res) => {
         }
 
         const oldVehicleId = reqOldVehicleId || contract.vehicleId;
-        const client = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = client.db(dbName);
 
-        const exchangeCollection = db.collection('VehicleExchange');
-        const vehicleCollection = db.collection('Vehicle');
-        const odometerCollection = db.collection('Odometer');
-        const contractCollection = db.collection('Contract');
+        const exchange = await prisma.$transaction(
+            async (tx) => {
+                const ex = await tx.vehicleExchange.create({
+                    data: {
+                        contract: { connect: { id: contractId } },
+                        oldVehicle: { connect: { id: oldVehicleId } },
+                        ...(newVehicleId ? { newVehicle: { connect: { id: newVehicleId } } } : {}),
+                        oldVehicleReturnDate,
+                        oldVehicleReturnOdometer,
+                        newVehicleStartDate: newVehicleStartDate || oldVehicleReturnDate,
+                        newVehicleStartOdometer: newVehicleStartOdometer || 0,
+                        newVehicleDailyRate: newVehicleDailyRate || 0,
+                        exchangeDate: new Date(),
+                    },
+                });
 
-        // 1. Create Exchange Record
-        const exchangeDoc = {
-            contractId: new ObjectId(contractId),
-            oldVehicleId: new ObjectId(oldVehicleId),
-            newVehicleId: newVehicleId ? new ObjectId(newVehicleId) : null,
-            oldVehicleReturnDate,
-            oldVehicleReturnOdometer,
-            newVehicleStartDate: newVehicleStartDate || oldVehicleReturnDate,
-            newVehicleStartOdometer: newVehicleStartOdometer || 0,
-            newVehicleDailyRate: newVehicleDailyRate || 0,
-            exchangeDate: new Date(),
-            createdAt: new Date(),
-            updatedAt: new Date()
-        };
-        const exchangeResult = await exchangeCollection.insertOne(exchangeDoc);
+                await tx.vehicle.update({
+                    where: { id: oldVehicleId },
+                    data: {
+                        status: 'BREAKDOWN',
+                        lastOdometer: oldVehicleReturnOdometer,
+                    },
+                });
 
-        // 2. Update Old Vehicle Status
-        await vehicleCollection.updateOne(
-            { _id: new ObjectId(oldVehicleId) },
-            { 
-                $set: { 
-                    status: 'BREAKDOWN', 
-                    lastOdometer: oldVehicleReturnOdometer,
-                    updatedAt: new Date()
-                } 
-            }
+                await tx.odometer.create({
+                    data: {
+                        vehicleId: oldVehicleId,
+                        reading: oldVehicleReturnOdometer,
+                        source: 'VEHICLE_EXCHANGE_RETURN',
+                    },
+                });
+
+                if (isEndOfContract) {
+                    await tx.contract.update({
+                        where: { id: contractId },
+                        data: {
+                            status: 'COMPLETED',
+                            actualReturnDate: oldVehicleReturnDate,
+                            endOdometer: oldVehicleReturnOdometer,
+                        },
+                    });
+                } else if (newVehicleId) {
+                    await tx.vehicle.update({
+                        where: { id: newVehicleId },
+                        data: { status: 'RENTED' },
+                    });
+                    await tx.contract.update({
+                        where: { id: contractId },
+                        data: {
+                            vehicleId: newVehicleId,
+                            startOdometer: newVehicleStartOdometer || 0,
+                            appliedDailyRate: newVehicleDailyRate || 0,
+                        },
+                    });
+                }
+
+                return ex;
+            },
+            TX_OPTS_CONTRACT,
         );
 
-        // 3. Create Odometer Record for old vehicle
-        await odometerCollection.insertOne({
-            vehicleId: new ObjectId(oldVehicleId),
-            reading: oldVehicleReturnOdometer,
-            source: 'VEHICLE_EXCHANGE_RETURN',
-            date: new Date(),
-            createdAt: new Date(),
-            updatedAt: new Date()
-        });
-
-        if (isEndOfContract) {
-            // 4a. End the Contract
-            await contractCollection.updateOne(
-                { _id: new ObjectId(contractId) },
-                {
-                    $set: {
-                        status: 'COMPLETED',
-                        actualReturnDate: oldVehicleReturnDate,
-                        endOdometer: oldVehicleReturnOdometer,
-                        updatedAt: new Date()
-                    }
-                }
-            );
-        } else if (newVehicleId) {
-            // 4b. Update Replacement Vehicle to RENTED
-            await vehicleCollection.updateOne(
-                { _id: new ObjectId(newVehicleId) },
-                { $set: { status: 'RENTED', updatedAt: new Date() } }
-            );
-
-            // 4c. Update Contract with new vehicle and rates
-            await contractCollection.updateOne(
-                { _id: new ObjectId(contractId) },
-                {
-                    $set: {
-                        vehicleId: new ObjectId(newVehicleId),
-                        startOdometer: newVehicleStartOdometer || 0,
-                        appliedDailyRate: newVehicleDailyRate || 0,
-                        updatedAt: new Date()
-                    }
-                }
-            );
-        }
-
-        res.json({ ...exchangeDoc, id: exchangeResult.insertedId.toString() });
+        res.json(exchange);
     } catch (error) {
         console.error("Exchange Vehicle Error:", error);
         if (error instanceof z.ZodError) {

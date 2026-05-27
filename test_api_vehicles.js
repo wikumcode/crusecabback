@@ -1,21 +1,22 @@
 const axios = require('axios');
+require('dotenv').config();
 
 async function testApi() {
+    const port = process.env.PORT || 5004;
+    const url = `http://localhost:${port}/api/vehicles`;
+    console.log(`Calling API: ${url}`);
     try {
-        console.log('Testing GET http://localhost:5000/api/vehicles ...');
-        const response = await axios.get('http://localhost:5000/api/vehicles');
+        const response = await axios.get(url);
         console.log('Status:', response.status);
-        console.log('Count:', response.data.length);
-        if (response.data.length > 0) {
-            console.log('First Vehicle:', JSON.stringify(response.data[0], null, 2));
-        } else {
-            console.log('No vehicles returned from API');
+        console.log('Data count:', response.data.data ? response.data.data.length : 'N/A');
+        console.log('Total pagination:', response.data.pagination ? response.data.pagination.total : 'N/A');
+        if (response.data.data && response.data.data.length > 0) {
+            console.log('Sample vehicle:', JSON.stringify(response.data.data[0], null, 2));
         }
     } catch (error) {
-        console.error('Error:', error.message);
+        console.error('API Error:', error.message);
         if (error.response) {
-            console.error('Status:', error.response.status);
-            console.error('Data:', error.response.data);
+            console.error('Response data:', error.response.data);
         }
     }
 }

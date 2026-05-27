@@ -1,8 +1,7 @@
 const prisma = require('../lib/prisma');
 const { z } = require('zod');
 const jwt = require('jsonwebtoken');
-const { getMongoClient, getNextSequenceValue } = require('../utils/sequence');
-const { ObjectId } = require('mongodb');
+const { getNextSequenceValue } = require('../utils/sequence');
 const { sendTemplateEmail } = require('../services/email/email.service');
 const { DOCUMENT_PRINT_STYLES } = require('../lib/documentPrintStyles');
 const { formatDateTime } = require('../lib/dates');
@@ -193,38 +192,6 @@ async function refreshInvoicePaidStatusInTx(tx, invoiceId) {
 }
 
 exports.refreshInvoicePaidStatusInTx = refreshInvoicePaidStatusInTx;
-
-/** Native Driver version of status refresh. */
-async function refreshInvoicePaidStatusNative(db, invoiceId) {
-    const invoiceCollection = db.collection('Invoice');
-    const paymentCollection = db.collection('InvoicePayment');
-
-    const inv = await invoiceCollection.findOne({ _id: new ObjectId(invoiceId) });
-    if (!inv || inv.status === 'VOID') return;
-
-    const payments = await paymentCollection.find({ invoiceId: new ObjectId(invoiceId) }).toArray();
-    const invWithPayments = { ...inv, payments };
-    
-    const total = Number(inv.total || 0);
-    const paidSum = sumPaymentsTowardBalance(invWithPayments);
-    
-    let status = 'ISSUED';
-    if (paidSum > MONEY_EPS && paidSum < total - MONEY_EPS) status = 'PARTIALLY_PAID';
-    else if (paidSum >= total - MONEY_EPS) status = 'PAID';
-
-    await invoiceCollection.updateOne(
-        { _id: new ObjectId(invoiceId) },
-        {
-            $set: {
-                status,
-                paidAt: status === 'PAID' ? new Date() : null,
-                paidMethod: status === 'PAID' ? inv.paidMethod : null,
-                updatedAt: new Date()
-            }
-        }
-    );
-}
-exports.refreshInvoicePaidStatusNative = refreshInvoicePaidStatusNative;
 
 async function getCompanyProfileFromSettings() {
     const [nameSetting, addressSetting, logoSetting, contactSetting, whatsappSetting] = await Promise.all([
@@ -672,68 +639,6 @@ async function ensureUpfrontInvoiceInTx(tx, contractId, contract, currency = 'LK
         include: invoiceIncludeDetail,
     });
 }
-exports.ensureUpfrontInvoiceInTx = ensureUpfrontInvoiceInTx;
-
-/** Native Driver version of upfront invoice preparation. */
-async function ensureUpfrontInvoiceNative(db, contractId, contract, currency = 'LKR') {
-    const invoiceCollection = db.collection('Invoice');
-
-    const existing = await invoiceCollection.findOne({ 
-        contractId: new ObjectId(contractId), 
-        type: 'UPFRONT', 
-        status: { $ne: 'VOID' } 
-    });
-
-    const advanceReceiptCollection = db.collection('AdvanceReceipt');
-    const postedAdvanceReceipt = await advanceReceiptCollection.findOne({
-        contractId: new ObjectId(contractId),
-        ledgerPostedAt: { $ne: null },
-        reversedAt: null
-    });
-
-    const { lines, subtotal, total } = buildUpfrontLinesAndTotals(contract, {
-        hasPostedAdvanceReceipt: Boolean(postedAdvanceReceipt),
-    });
-
-    if (existing) {
-        await invoiceCollection.updateOne(
-            { _id: existing._id },
-            {
-                $set: {
-                    subtotal,
-                    total,
-                    lines,
-                    updatedAt: new Date()
-                }
-            }
-        );
-        return { ...existing, subtotal, total, lines };
-    }
-
-    // Atomic sequence update via unified Prisma utility
-    const next = await getNextSequenceValue(INVOICE_SEQ_KEY);
-    const invoiceNo = buildInvoiceNo(next, new Date());
-
-    const newInvoice = {
-        invoiceNo,
-        sequence: next,
-        type: 'UPFRONT',
-        currency: currency || 'LKR',
-        subtotal,
-        total,
-        status: 'ISSUED',
-        lines,
-        contractId: new ObjectId(contractId),
-        customerId: new ObjectId(contract.customerId),
-        vehicleId: new ObjectId(contract.vehicleId),
-        createdAt: new Date(),
-        updatedAt: new Date()
-    };
-
-    const insertResult = await invoiceCollection.insertOne(newInvoice);
-    return { ...newInvoice, id: insertResult.insertedId.toString() };
-}
-exports.ensureUpfrontInvoiceNative = ensureUpfrontInvoiceNative;
 
 exports.getInvoiceByContract = async (req, res) => {
     try {
@@ -1022,83 +927,6 @@ async function applyUpfrontPaymentInTx(tx, invoice, paymentAmount, method, opts 
 }
 exports.applyUpfrontPaymentInTx = applyUpfrontPaymentInTx;
 
-/** Native Driver version of payment application. */
-async function applyUpfrontPaymentNative(db, invoice, paymentAmount, method, opts = {}) {
-    const { advanceReceiptId } = opts;
-    const amt = roundMoney(paymentAmount);
-    if (amt <= 0) throw new Error('Payment amount must be positive');
-
-    const paymentCollection = db.collection('InvoicePayment');
-    const ledgerCollection = db.collection('LedgerEntry');
-    const invoiceCollection = db.collection('Invoice');
-
-    const invoiceId = invoice.id || invoice._id.toString();
-
-    const existingPayments = await paymentCollection.find({ 
-        invoiceId: new ObjectId(invoiceId) 
-    }).sort({ paidAt: 1, _id: 1 }).toArray();
-    
-    const priorCash = existingPayments.reduce((s, p) => s + Number(p.amount || 0), 0);
-
-    const paymentDoc = {
-        amount: amt,
-        method: method || null,
-        paidAt: new Date(),
-        invoiceId: new ObjectId(invoiceId),
-        advanceReceiptId: advanceReceiptId ? new ObjectId(advanceReceiptId) : null,
-        createdAt: new Date(),
-        updatedAt: new Date()
-    };
-    await paymentCollection.insertOne(paymentDoc);
-
-    const lines = Array.isArray(invoice.lines) ? invoice.lines : [];
-    const depositLine = lines.find(l => l?.code === 'DEPOSIT');
-    const deposit = Number(depositLine?.amount || 0);
-
-    const { income, liability } = computeDepositFirstLedgerSplit(deposit, priorCash, amt);
-    const incomeAmt = roundMoney(income);
-    const liabilityAmt = roundMoney(liability);
-    const cur = invoice.currency || 'LKR';
-    const invNo = invoice.invoiceNo || '';
-
-    const contractId = invoice.contractId;
-    const customerId = invoice.customerId;
-    const vehicleId = invoice.vehicleId;
-
-    if (incomeAmt > MONEY_EPS && Number.isFinite(incomeAmt)) {
-        await ledgerCollection.insertOne({
-            type: 'INCOME',
-            amount: incomeAmt,
-            currency: cur,
-            description: `Invoice ${invNo} rental income (deposit-first cash allocation)`,
-            invoiceId: new ObjectId(invoiceId),
-            contractId: new ObjectId(contractId),
-            customerId: new ObjectId(customerId),
-            vehicleId: new ObjectId(vehicleId),
-            createdAt: new Date(),
-            updatedAt: new Date()
-        });
-    }
-
-    if (Math.abs(liabilityAmt) > MONEY_EPS && Number.isFinite(liabilityAmt)) {
-        await ledgerCollection.insertOne({
-            type: 'LIABILITY',
-            amount: liabilityAmt,
-            currency: cur,
-            description: `Security deposit liability for ${invNo} (deposit-first)`,
-            invoiceId: new ObjectId(invoiceId),
-            contractId: new ObjectId(contractId),
-            customerId: new ObjectId(customerId),
-            vehicleId: new ObjectId(vehicleId),
-            createdAt: new Date(),
-            updatedAt: new Date()
-        });
-    }
-
-    await refreshInvoicePaidStatusNative(db, invoiceId);
-}
-exports.applyUpfrontPaymentNative = applyUpfrontPaymentNative;
-
 /** RETURN settlement: single ledger posting (no partials). */
 async function applyReturnSettlementInTx(tx, invoice, method) {
     const lines = Array.isArray(invoice.lines) ? invoice.lines : [];
@@ -1162,85 +990,7 @@ async function applyReturnSettlementInTx(tx, invoice, method) {
         }
     });
 }
-
-/** Native version of return settlement — avoids P2031 on standalone MongoDB */
-async function applyReturnSettlementNative(db, invoice, method) {
-    const invoiceId = invoice.id;
-    const paymentCollection = db.collection('InvoicePayment');
-    const ledgerCollection = db.collection('LedgerEntry');
-    const invoiceCollection = db.collection('Invoice');
-
-    const lines = Array.isArray(invoice.lines) ? invoice.lines : [];
-    const depositLine = lines.find(l => l?.code === 'DEPOSIT');
-    const deposit = Number(depositLine?.amount || 0);
-
-    const deductionsTotal = lines
-        .filter(l => l && l.code !== 'DEPOSIT' && l.code !== 'NET')
-        .reduce((sum, l) => sum + Math.max(0, -Number(l.amount || 0)), 0);
-
-    const incomeAmount = deductionsTotal;
-    const liabilityDelta = deposit > 0 ? -Math.abs(deposit) : 0;
-
-    const settlementAmount = roundMoney(Math.abs(Number(invoice.total || 0)));
-
-    // Record payment
-    await paymentCollection.insertOne({
-        amount: settlementAmount,
-        method: method || null,
-        paidAt: new Date(),
-        invoiceId: new ObjectId(invoiceId),
-        createdAt: new Date(),
-        updatedAt: new Date()
-    });
-
-    const cur = invoice.currency || 'LKR';
-    const invNo = invoice.invoiceNo || '';
-
-    // Record Income Ledger
-    if (incomeAmount > MONEY_EPS) {
-        await ledgerCollection.insertOne({
-            type: 'INCOME',
-            amount: incomeAmount,
-            currency: cur,
-            description: `Return settlement income for ${invNo}`,
-            invoiceId: new ObjectId(invoiceId),
-            contractId: new ObjectId(invoice.contractId),
-            customerId: new ObjectId(invoice.customerId),
-            vehicleId: new ObjectId(invoice.vehicleId),
-            createdAt: new Date(),
-            updatedAt: new Date()
-        });
-    }
-
-    // Record Liability Ledger (release deposit)
-    if (Math.abs(liabilityDelta) > MONEY_EPS) {
-        await ledgerCollection.insertOne({
-            type: 'LIABILITY',
-            amount: liabilityDelta,
-            currency: cur,
-            description: `Security deposit settlement for ${invNo}`,
-            invoiceId: new ObjectId(invoiceId),
-            contractId: new ObjectId(invoice.contractId),
-            customerId: new ObjectId(invoice.customerId),
-            vehicleId: new ObjectId(invoice.vehicleId),
-            createdAt: new Date(),
-            updatedAt: new Date()
-        });
-    }
-
-    // Update invoice status
-    await invoiceCollection.updateOne(
-        { _id: new ObjectId(invoiceId) },
-        {
-            $set: {
-                status: 'PAID',
-                paidAt: new Date(),
-                paidMethod: method || invoice.paidMethod || null,
-                updatedAt: new Date()
-            }
-        }
-    );
-}
+exports.applyReturnSettlementInTx = applyReturnSettlementInTx;
 
 exports.recordInvoicePayment = async (req, res) => {
     try {
@@ -1272,12 +1022,12 @@ exports.recordInvoicePayment = async (req, res) => {
             return res.status(400).json({ message: `Amount exceeds balance due (${remaining})` });
         }
 
-        // Native driver setup — avoids P2031 on standalone MongoDB
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
-
-        await applyUpfrontPaymentNative(db, invoice, amount, method, {});
+        await prisma.$transaction(
+            async (tx) => {
+                await applyUpfrontPaymentInTx(tx, invoice, amount, method, {});
+            },
+            TX_OPTS_INVOICE,
+        );
 
         const full = await loadInvoiceDetail(id);
         res.json(full);
@@ -1305,16 +1055,16 @@ exports.markInvoicePaid = async (req, res) => {
 
         const invoiceType = String(invoice.type || '').toUpperCase();
 
-        // Native driver setup — avoids P2031 on standalone MongoDB
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
-
         if (invoiceType === 'RETURN') {
             if (invoice.payments?.length) {
                 return res.status(400).json({ message: 'Return invoice already has payment records' });
             }
-            await applyReturnSettlementNative(db, invoice, method);
+            await prisma.$transaction(
+                async (tx) => {
+                    await applyReturnSettlementInTx(tx, invoice, method);
+                },
+                TX_OPTS_INVOICE,
+            );
             return res.json(await loadInvoiceDetail(id));
         }
 
@@ -1322,21 +1072,23 @@ exports.markInvoicePaid = async (req, res) => {
         const paidSum = sumPaymentsTowardBalance(invoice);
         const remaining = roundMoney(total - paidSum);
 
-        if (remaining <= MONEY_EPS) {
-            await db.collection('Invoice').updateOne(
-                { _id: new ObjectId(id) },
-                {
-                    $set: {
-                        status: 'PAID',
-                        paidAt: new Date(),
-                        paidMethod: method || invoice.paidMethod || null,
-                        updatedAt: new Date()
-                    }
+        await prisma.$transaction(
+            async (tx) => {
+                if (remaining <= MONEY_EPS) {
+                    await tx.invoice.update({
+                        where: { id },
+                        data: {
+                            status: 'PAID',
+                            paidAt: new Date(),
+                            paidMethod: method || invoice.paidMethod || null,
+                        },
+                    });
+                } else {
+                    await applyUpfrontPaymentInTx(tx, invoice, remaining, method, {});
                 }
-            );
-        } else {
-            await applyUpfrontPaymentNative(db, invoice, remaining, method, {});
-        }
+            },
+            TX_OPTS_INVOICE,
+        );
 
         res.json(await loadInvoiceDetail(id));
     } catch (error) {
@@ -1369,52 +1121,42 @@ exports.createCreditNote = async (req, res) => {
             return res.status(400).json({ message: 'Only PAID invoices can be credited' });
         }
 
-        // Native driver setup — avoids P2031 on standalone MongoDB
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
-        const creditNoteCollection = db.collection('CreditNote');
-        const ledgerCollection = db.collection('LedgerEntry');
-        const invoiceCollection = db.collection('Invoice');
+        const created = await prisma.$transaction(async (tx) => {
+            const next = await getNextSequenceValue(CREDIT_NOTE_SEQ_KEY);
+            const creditNoteNo = buildCreditNoteNo(next, new Date());
 
-        // 1. Allocate sequence number via unified Prisma utility
-        const next = await getNextSequenceValue(CREDIT_NOTE_SEQ_KEY);
-        const creditNoteNo = buildCreditNoteNo(next, new Date());
-
-        // 2. Insert Credit Note
-        const cnResult = await creditNoteCollection.insertOne({
-            creditNoteNo,
-            sequence: next,
-            reason: reason || null,
-            invoiceId: new ObjectId(invoice.id),
-            createdAt: new Date(),
-            updatedAt: new Date()
-        });
-
-        // 3. Reverse ledger impact by adding negative entries
-        const entries = await prisma.ledgerEntry.findMany({ where: { invoiceId: invoice.id } });
-        for (const e of entries) {
-            await ledgerCollection.insertOne({
-                type: e.type,
-                amount: -Math.abs(e.amount),
-                currency: e.currency,
-                description: `Credit note ${creditNoteNo} reversal for ${invoice.invoiceNo}`,
-                invoiceId: new ObjectId(invoice.id),
-                contractId: e.contractId ? new ObjectId(e.contractId) : null,
-                customerId: e.customerId ? new ObjectId(e.customerId) : null,
-                vehicleId: e.vehicleId ? new ObjectId(e.vehicleId) : null,
-                createdAt: new Date(),
-                updatedAt: new Date()
+            const cn = await tx.creditNote.create({
+                data: {
+                    creditNoteNo,
+                    sequence: next,
+                    reason: reason || null,
+                    invoice: { connect: { id: invoice.id } },
+                },
             });
-        }
 
-        // 4. Update invoice status to VOID
-        await invoiceCollection.updateOne(
-            { _id: new ObjectId(invoice.id) },
-            { $set: { status: 'VOID', updatedAt: new Date() } }
-        );
+            const entries = await tx.ledgerEntry.findMany({ where: { invoiceId: invoice.id } });
+            for (const e of entries) {
+                await tx.ledgerEntry.create({
+                    data: {
+                        type: e.type,
+                        amount: -Math.abs(e.amount),
+                        currency: e.currency,
+                        description: `Credit note ${creditNoteNo} reversal for ${invoice.invoiceNo}`,
+                        invoice: { connect: { id: invoice.id } },
+                        contract: { connect: { id: e.contractId || invoice.contractId } },
+                        customer: { connect: { id: e.customerId || invoice.customerId } },
+                        vehicle: { connect: { id: e.vehicleId || invoice.vehicleId } },
+                    },
+                });
+            }
 
-        const created = await prisma.creditNote.findUnique({ where: { id: cnResult.insertedId.toString() } });
+            await tx.invoice.update({
+                where: { id: invoice.id },
+                data: { status: 'VOID' },
+            });
+
+            return tx.creditNote.findUnique({ where: { id: cn.id } });
+        }, TX_OPTS_INVOICE);
 
         res.status(201).json(created);
     } catch (error) {
@@ -1433,13 +1175,10 @@ exports.createUpfrontInvoiceForContract = async (req, res) => {
 
         const existing = await prisma.invoice.findFirst({ where: { contractId, type: 'UPFRONT' } });
         if (existing && existing.status === 'VOID') {
-            const mClientVoid = await getMongoClient();
-            const dbNameVoid = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-            const dbVoid = mClientVoid.db(dbNameVoid);
-            await dbVoid.collection('Contract').updateOne(
-                { _id: new ObjectId(contractId) },
-                { $set: { upfrontReleased: true, updatedAt: new Date() } }
-            );
+            await prisma.contract.update({
+                where: { id: contractId },
+                data: { upfrontReleased: true },
+            });
             const invoice = await prisma.invoice.findUnique({
                 where: { id: existing.id },
                 include: invoiceIncludeDetail
@@ -1477,24 +1216,22 @@ exports.createUpfrontInvoiceForContract = async (req, res) => {
         });
         if (!contract) return res.status(404).json({ message: 'Contract not found' });
 
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
-
-        const inv = await ensureUpfrontInvoiceNative(db, contractId, contract, currency || 'LKR');
-
-        await db.collection('Contract').updateOne(
-            { _id: new ObjectId(contractId) },
-            { $set: { upfrontReleased: true, updatedAt: new Date() } }
+        const invoice = await prisma.$transaction(
+            async (tx) => {
+                const inv = await ensureUpfrontInvoiceInTx(tx, contractId, contract, currency || 'LKR');
+                await tx.contract.update({
+                    where: { id: contractId },
+                    data: { upfrontReleased: true },
+                });
+                return tx.invoice.findUnique({
+                    where: { id: inv.id },
+                    include: invoiceIncludeDetail,
+                });
+            },
+            TX_OPTS_INVOICE,
         );
 
-        const resolvedId = inv.id || (inv._id ? inv._id.toString() : null);
-        if (!resolvedId) throw new Error('Invoice creation failed — no ID returned');
-
-        const invoice = await prisma.invoice.findUnique({
-            where: { id: resolvedId },
-            include: invoiceIncludeDetail
-        });
+        if (!invoice) throw new Error('Invoice creation failed — no invoice returned');
 
         (async () => {
             try {
@@ -1719,54 +1456,41 @@ exports.createReturnInvoiceForContract = async (req, res) => {
 
         const subtotal = net;
 
-        // Setup native driver — avoids P2031 on standalone MongoDB
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
-        const invoiceCollection = db.collection('Invoice');
-
         let invoiceId;
 
         if (existing) {
-            // Update existing return invoice — native driver write
-            await invoiceCollection.updateOne(
-                { _id: new ObjectId(existing.id) },
-                {
-                    $set: {
-                        type: 'RETURN',
-                        currency: currency || existing.currency || 'LKR',
-                        subtotal,
-                        total: subtotal,
-                        lines,
-                        status: existing.status === 'PAID' ? 'PAID' : 'ISSUED',
-                        updatedAt: new Date(),
-                    }
-                }
-            );
+            await prisma.invoice.update({
+                where: { id: existing.id },
+                data: {
+                    type: 'RETURN',
+                    currency: currency || existing.currency || 'LKR',
+                    subtotal,
+                    total: subtotal,
+                    lines,
+                    status: existing.status === 'PAID' ? 'PAID' : 'ISSUED',
+                },
+            });
             invoiceId = existing.id;
         } else {
-            // Allocate sequence number via unified Prisma utility
             const next = await getNextSequenceValue(INVOICE_SEQ_KEY);
             const invoiceNo = buildInvoiceNo(next, new Date());
 
-            // Insert new return invoice — native driver write
-            const insertResult = await invoiceCollection.insertOne({
-                invoiceNo,
-                sequence: next,
-                type: 'RETURN',
-                currency: currency || 'LKR',
-                subtotal,
-                total: subtotal,
-                status: 'ISSUED',
-                lines,
-                contractId: new ObjectId(contractId),
-                customerId: new ObjectId(contract.customerId),
-                vehicleId: new ObjectId(contract.vehicleId),
-                shareToken: null,
-                createdAt: new Date(),
-                updatedAt: new Date(),
+            const created = await prisma.invoice.create({
+                data: {
+                    invoiceNo,
+                    sequence: next,
+                    type: 'RETURN',
+                    currency: currency || 'LKR',
+                    subtotal,
+                    total: subtotal,
+                    status: 'ISSUED',
+                    lines,
+                    contract: { connect: { id: contractId } },
+                    customer: { connect: { id: contract.customerId } },
+                    vehicle: { connect: { id: contract.vehicleId } },
+                },
             });
-            invoiceId = insertResult.insertedId.toString();
+            invoiceId = created.id;
         }
 
         // Fetch fully populated invoice via Prisma (read-only — safe)

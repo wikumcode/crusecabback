@@ -15,27 +15,19 @@ exports.getSetting = async (req, res) => {
     }
 };
 
-const { MongoClient } = require('mongodb');
-
 // Update setting request
 exports.updateSetting = async (req, res) => {
     try {
         const { key } = req.params;
         const { value } = req.body;
 
-        // Use Native Driver to bypass Replica Set requirement
-        const client = new MongoClient(process.env.DATABASE_URL);
-        await client.connect();
-        const db = client.db(); // Uses db from connection string
-        
-        const result = await db.collection('SystemSetting').updateOne(
-            { key },
-            { $set: { value: String(value), updatedAt: new Date() } },
-            { upsert: true }
-        );
+        await prisma.systemSetting.upsert({
+            where: { key },
+            create: { key, value: String(value) },
+            update: { value: String(value) },
+        });
 
-        await client.close();
-        res.json({ key, value });
+        res.json({ key, value: String(value) });
     } catch (error) {
         console.error("Update Setting Error:", error);
         res.status(500).json({ message: "Failed to update setting" });

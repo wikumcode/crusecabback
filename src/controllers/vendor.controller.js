@@ -48,11 +48,9 @@ exports.getVendors = async (req, res) => {
     }
 };
 
-const { getNextSequenceValue, getMongoClient } = require('../utils/sequence');
-const { ObjectId } = require('mongodb');
+const { getNextSequenceValue } = require('../utils/sequence');
 
 const generateVendorCode = async () => {
-    // Generate Code: VEN/00001 via SystemSetting sequence
     const nextNumber = await getNextSequenceValue('vendor_sequence');
     return `VEN/${String(nextNumber).padStart(5, '0')}`;
 };
@@ -79,44 +77,33 @@ exports.createVendor = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
         const vendorCode = await generateVendorCode();
 
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
+        const user = await prisma.user.create({
+            data: {
+                email,
+                password: hashedPassword,
+                name,
+                role: 'VENDOR',
+                vendorDetails: {
+                    create: {
+                        vendorCode,
+                        photoUrl,
+                        phone,
+                        address,
+                        nic,
+                        nicFrontUrl,
+                        nicBackUrl,
+                        utilityBillUrl,
+                        attachment1Url,
+                        attachment2Url,
+                        vendorType,
+                    },
+                },
+            },
+        });
 
-        // 1. Create User
-        const userData = {
-            email,
-            password: hashedPassword,
-            name,
-            role: 'VENDOR',
-            createdAt: new Date(),
-            updatedAt: new Date()
-        };
-        const userResult = await db.collection('User').insertOne(userData);
-        const userId = userResult.insertedId;
-
-        // 2. Create VendorDetails
-        const vendorDetailsData = {
-            userId: userId,
-            vendorCode,
-            photoUrl,
-            phone,
-            address,
-            nic,
-            nicFrontUrl,
-            nicBackUrl,
-            utilityBillUrl,
-            attachment1Url,
-            attachment2Url,
-            vendorType,
-            createdAt: new Date(),
-            updatedAt: new Date()
-        };
-        await db.collection('VendorDetails').insertOne(vendorDetailsData);
-
-        res.status(201).json({ 
-            message: 'Vendor created successfully', 
-            vendor: { id: userId, ...userData } 
+        res.status(201).json({
+            message: 'Vendor created successfully',
+            vendor: { id: user.id, email: user.email, name: user.name, role: user.role, createdAt: user.createdAt },
         });
     } catch (error) {
         console.error("Create Vendor Error:", error);
@@ -135,37 +122,44 @@ exports.updateVendor = async (req, res) => {
             vendorType, photoUrl
         } = req.body;
 
-        const userData = { name, email, updatedAt: new Date() };
+        const userData = { name, email };
         if (password) {
             userData.password = await bcrypt.hash(password, 10);
         }
 
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
+        await prisma.user.update({
+            where: { id },
+            data: userData,
+        });
 
-        // 1. Update User
-        await db.collection('User').updateOne(
-            { _id: new ObjectId(id) },
-            { $set: userData }
-        );
-
-        // 2. Upsert VendorDetails
-        const vendorDetailsData = {
-            phone, address, nic,
-            nicFrontUrl, nicBackUrl, utilityBillUrl, attachment1Url, attachment2Url,
-            vendorType, photoUrl,
-            updatedAt: new Date()
-        };
-
-        await db.collection('VendorDetails').updateOne(
-            { userId: new ObjectId(id) },
-            { 
-                $set: vendorDetailsData,
-                $setOnInsert: { createdAt: new Date() }
+        await prisma.vendorDetails.upsert({
+            where: { userId: id },
+            create: {
+                userId: id,
+                phone,
+                address,
+                nic,
+                nicFrontUrl,
+                nicBackUrl,
+                utilityBillUrl,
+                attachment1Url,
+                attachment2Url,
+                vendorType,
+                photoUrl,
             },
-            { upsert: true }
-        );
+            update: {
+                phone,
+                address,
+                nic,
+                nicFrontUrl,
+                nicBackUrl,
+                utilityBillUrl,
+                attachment1Url,
+                attachment2Url,
+                vendorType,
+                photoUrl,
+            },
+        });
 
         res.json({ message: 'Vendor updated successfully' });
     } catch (error) {
@@ -178,15 +172,8 @@ exports.updateVendor = async (req, res) => {
 exports.deleteVendor = async (req, res) => {
     try {
         const { id } = req.params;
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
-
-        // Delete VendorDetails first
-        await db.collection('VendorDetails').deleteOne({ userId: new ObjectId(id) });
-        // Then delete User
-        await db.collection('User').deleteOne({ _id: new ObjectId(id) });
-
+        await prisma.vendorDetails.deleteMany({ where: { userId: id } });
+        await prisma.user.delete({ where: { id } });
         res.json({ message: "Vendor deleted successfully" });
     } catch (error) {
         console.error("Delete Vendor Error:", error);

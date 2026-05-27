@@ -1,8 +1,7 @@
 const crypto = require('crypto');
 const prisma = require('../lib/prisma');
 const jwt = require('jsonwebtoken');
-const { ObjectId } = require('mongodb');
-const { getMongoClient, getNextSequenceValue } = require('../utils/sequence');
+const { getNextSequenceValue } = require('../utils/sequence');
 const { DOCUMENT_PRINT_STYLES } = require('../lib/documentPrintStyles');
 const { formatDate } = require('../lib/dates');
 
@@ -482,21 +481,13 @@ exports.createAgreementForContract = async (req, res) => {
         const company = await getCompanyProfileFromSettings();
         const data = buildAgreementData(contract, company);
 
-        // Setup native driver — avoids P2031 on standalone MongoDB
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
-        const agreementCollection = db.collection('Agreement');
-
-        // Check for an existing agreement for this contract
         const existing = await prisma.agreement.findUnique({ where: { contractId } });
 
         if (existing) {
-            // Update existing — native driver write
-            await agreementCollection.updateOne(
-                { _id: new ObjectId(existing.id) },
-                { $set: { data, status: 'GENERATED', updatedAt: new Date() } }
-            );
+            await prisma.agreement.update({
+                where: { id: existing.id },
+                data: { data, status: 'GENERATED' },
+            });
 
             const updated = await prisma.agreement.findUnique({
                 where: { id: existing.id },
@@ -509,27 +500,19 @@ exports.createAgreementForContract = async (req, res) => {
             return res.json(updated);
         }
 
-        // Allocate sequence number via unified Prisma utility
         const next = await getNextSequenceValue(AGREEMENT_SEQ_KEY);
         const agreementNo = buildAgreementNo(next, new Date());
 
-        // Insert new agreement using native driver
-        const insertResult = await agreementCollection.insertOne({
-            agreementNo,
-            sequence: next,
-            contractId: new ObjectId(contractId),
-            customerId: new ObjectId(contract.customerId),
-            vehicleId: new ObjectId(contract.vehicleId),
-            data,
-            status: 'GENERATED',
-            shareToken: null,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-        });
-
-        // Fetch the newly created agreement with full relations via Prisma (read-only, safe)
-        const agreement = await prisma.agreement.findUnique({
-            where: { id: insertResult.insertedId.toString() },
+        const agreement = await prisma.agreement.create({
+            data: {
+                agreementNo,
+                sequence: next,
+                contract: { connect: { id: contractId } },
+                customer: { connect: { id: contract.customerId } },
+                vehicle: { connect: { id: contract.vehicleId } },
+                data,
+                status: 'GENERATED',
+            },
             include: {
                 contract: true,
                 customer: true,

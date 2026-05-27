@@ -195,11 +195,16 @@ table.doc-table {
 @media print {
   body { background: #fff; padding: 0; }
   .doc { box-shadow: none; border: none; border-radius: 0; max-width: none; }
-  .doc-inner { padding: 20px 20px 80px; min-height: 270mm; display: flex; flex-direction: column; }
+  .doc-inner { padding: 16px 20px 20px; min-height: auto; display: block; }
+  .doc-foot { page-break-after: avoid; break-after: avoid; }
   .doc-brand-footer {
-    margin-top: auto;
+    margin-top: 20px;
+    padding-top: 12px;
     border-top: 1px solid var(--line);
-    padding-bottom: 20px;
+    page-break-before: avoid;
+    break-before: avoid;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
 }
 @media (max-width: 560px) {

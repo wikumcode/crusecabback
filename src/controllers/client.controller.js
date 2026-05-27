@@ -1,6 +1,6 @@
 const prisma = require('../lib/prisma');
 const { sendWelcomeEmail } = require('../utils/email');
-const { getNextSequenceValue, getMongoClient } = require('../utils/sequence');
+const { getNextSequenceValue } = require('../utils/sequence');
 
 // Create new customer
 exports.createClient = async (req, res) => {

@@ -14,10 +14,15 @@ if (result.error) {
     console.log(`[Env] .env loaded successfully from ${envPath}`);
 }
 
-// Fallback for Render/Production environments where MONGODB_URI is used
+// DATABASE_URL must be a PostgreSQL connection string, e.g. postgresql://user:pass@host:5432/dbname
+if (!process.env.DATABASE_URL && process.env.POSTGRES_URL) {
+    process.env.DATABASE_URL = process.env.POSTGRES_URL;
+    console.log('[Env] Aliased POSTGRES_URL to DATABASE_URL');
+}
+// Legacy: older deployments used MONGODB_URI as Prisma datasource name
 if (!process.env.DATABASE_URL && process.env.MONGODB_URI) {
     process.env.DATABASE_URL = process.env.MONGODB_URI;
-    console.log('[Env] Aliased MONGODB_URI to DATABASE_URL for Prisma compatibility');
+    console.log('[Env] Aliased MONGODB_URI to DATABASE_URL (legacy env name)');
 }
 
 process.env.TZ = 'Asia/Colombo';
@@ -35,7 +40,6 @@ const PORT = process.env.PORT || 5000;
 console.log('--- Environment Check ---');
 console.log('JWT_SECRET loaded:', !!process.env.JWT_SECRET);
 console.log('DATABASE_URL loaded:', !!process.env.DATABASE_URL);
-console.log('MONGODB_URI loaded:', !!process.env.MONGODB_URI);
 console.log('-------------------------');
 
 const allowedOrigins = new Set([

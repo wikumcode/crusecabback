@@ -1,7 +1,6 @@
 const crypto = require('crypto');
 const prisma = require('../lib/prisma'); // keep explicit import for quotation persistence
-const { getMongoClient, getNextSequenceValue } = require('../utils/sequence');
-const { ObjectId } = require('mongodb');
+const { getNextSequenceValue } = require('../utils/sequence');
 const jwt = require('jsonwebtoken');
 const { z } = require('zod');
 const { DOCUMENT_PRINT_STYLES } = require('../lib/documentPrintStyles');
@@ -49,10 +48,10 @@ async function ensureQuotationShareToken(quotationId) {
  * second insert with `shareToken == null` raises `Quotation_share_token_key`.
  * We therefore generate the token at create time so the column is never null.
  */
-async function allocateNewShareToken(db) {
+async function allocateNewShareTokenPrisma() {
     for (let attempt = 0; attempt < 10; attempt++) {
         const token = randomShareTokenChars(12);
-        const clash = await db.collection('Quotation').findOne({ shareToken: token });
+        const clash = await prisma.quotation.findFirst({ where: { shareToken: token } });
         if (!clash) return token;
     }
     throw new Error('Failed to allocate share token after multiple attempts');
@@ -179,7 +178,7 @@ function renderSharedQuotationHtml(quotation, company, baseUrl) {
         : '';
 
     const rowsHtml = `
-      <tr><td>Daily rate × ${Number(quotation.rentalDays || 1)} day(s) @ ${Number(quotation.dailyRate || 0).toLocaleString()} LKR</td><td>${Number(quotation.baseAmount || 0).toLocaleString()}</td></tr>
+      <tr><td>Base rental (${escapeHtml(formatRentalPeriod(quotation.pickupDate, quotation.dropoffDate))} @ ${Number(quotation.dailyRate || 0).toLocaleString()} LKR/day)</td><td>${Number(quotation.baseAmount || 0).toLocaleString()}</td></tr>
       ${extraCharges.map((r) => `
       <tr><td>${escapeHtml(r.description || 'Extra charge')}</td><td>${Number(r.amount || 0).toLocaleString()}</td></tr>`).join('')}`;
 
@@ -207,7 +206,7 @@ function renderSharedQuotationHtml(quotation, company, baseUrl) {
           <div class="doc-main-id">${escapeHtml(quotation.quotationNo || '')}</div>
           <div class="doc-meta">Issued <b>${escapeHtml(formatQuotationDateTime(issueDate))}</b> · Valid through <b>${escapeHtml(formatQuotationDateTime(validUntil))}</b></div>
         </div>
-        <div class="doc-pill doc-pill-em">${Number(quotation.rentalDays || 1)} day rental</div>
+        <div class="doc-pill doc-pill-em">${escapeHtml(formatRentalPeriod(quotation.pickupDate, quotation.dropoffDate))}</div>
       </div>
 
       <div class="doc-cards">
@@ -267,7 +266,7 @@ const createQuotationSchema = z.object({
     vehicleId: z.string().min(1),
     pickupDate: z.string().min(1),
     dropoffDate: z.string().min(1),
-    rentalDays: z.number().int().min(1),
+    rentalDays: z.number().positive(),
     dailyRate: z.number().nonnegative(),
     baseAmount: z.number().nonnegative(),
     extraCharges: z.array(z.object({
@@ -305,6 +304,29 @@ function addDays(date, days) {
     return d;
 }
 
+const MS_PER_RENTAL_DAY = 24 * 60 * 60 * 1000;
+
+/** Exact rental length in 24h day-units (pick-up 08:00 → next day 08:00 = 1). */
+function computeRentalDayUnits(pickupDate, dropoffDate) {
+    const ms = dropoffDate.getTime() - pickupDate.getTime();
+    if (!Number.isFinite(ms) || ms <= 0) return null;
+    return ms / MS_PER_RENTAL_DAY;
+}
+
+function formatRentalPeriod(pickupDate, dropoffDate) {
+    const ms = dropoffDate.getTime() - pickupDate.getTime();
+    if (!Number.isFinite(ms) || ms <= 0) return '—';
+    const totalMinutes = Math.floor(ms / 60000);
+    const days = Math.floor(totalMinutes / (24 * 60));
+    const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+    const minutes = totalMinutes % 60;
+    const parts = [];
+    if (days) parts.push(`${days} day${days !== 1 ? 's' : ''}`);
+    if (hours) parts.push(`${hours} hour${hours !== 1 ? 's' : ''}`);
+    if (minutes) parts.push(`${minutes} minute${minutes !== 1 ? 's' : ''}`);
+    return parts.length ? parts.join(', ') : 'Less than 1 minute';
+}
+
 exports.createQuotation = async (req, res) => {
     try {
         const data = createQuotationSchema.parse(req.body || {});
@@ -313,46 +335,45 @@ exports.createQuotation = async (req, res) => {
 
         const pickupDate = parsePickupDropoffDateTime(data.pickupDate);
         const dropoffDate = parsePickupDropoffDateTime(data.dropoffDate);
-
-        const mClient = await getMongoClient();
-        const dbName = process.env.DATABASE_URL.split('/').pop().split('?')[0];
-        const db = mClient.db(dbName);
+        const rentalDayUnits = computeRentalDayUnits(pickupDate, dropoffDate);
+        if (rentalDayUnits == null) {
+            return res.status(400).json({ message: 'Drop-off must be after pick-up date and time.' });
+        }
+        const rentalDays = rentalDayUnits;
+        const baseAmount = Math.round(data.dailyRate * rentalDayUnits * 100) / 100;
 
         const seqKey = `quotation_sequence_${issueDate.getFullYear()}_${String(issueDate.getMonth() + 1).padStart(2, '0')}`;
         const next = await getNextSequenceValue(seqKey);
         const quotationNo = buildQuotationNo(next, issueDate);
-        const shareToken = await allocateNewShareToken(db);
+        const shareToken = await allocateNewShareTokenPrisma();
 
-        const quotationData = {
-            quotation_no: quotationNo,
-            issue_date: issueDate,
-            valid_until: validUntil,
-            customer_mode: data.customerMode,
-            customer_id: data.customerMode === 'EXISTING' && data.customerId ? new ObjectId(data.customerId) : null,
-            customer_name: data.customerName,
-            customer_email: data.customerEmail || null,
-            customer_type: data.customerType,
-            vehicle_id: new ObjectId(data.vehicleId),
-            pickup_date: pickupDate,
-            dropoff_date: dropoffDate,
-            rental_days: data.rentalDays,
-            daily_rate: data.dailyRate,
-            base_amount: data.baseAmount,
-            extra_charges_json: JSON.stringify(data.extraCharges || []),
-            extra_amount: data.extraAmount,
-            total_amount: data.totalAmount,
-            security_deposit: Number(data.securityDeposit || 0),
-            share_token: shareToken,
-            created_by_user_id: req.user?.id ? new ObjectId(req.user.id) : null,
-            created_at: new Date(),
-            updated_at: new Date()
-        };
+        const result = await prisma.quotation.create({
+            data: {
+                quotationNo,
+                issueDate,
+                validUntil,
+                customerMode: data.customerMode,
+                customerId: data.customerMode === 'EXISTING' && data.customerId ? data.customerId : null,
+                customerName: data.customerName,
+                customerEmail: data.customerEmail || null,
+                customerType: data.customerType,
+                vehicleId: data.vehicleId,
+                pickupDate,
+                dropoffDate,
+                rentalDays,
+                dailyRate: data.dailyRate,
+                baseAmount,
+                extraChargesJson: JSON.stringify(data.extraCharges || []),
+                extraAmount: data.extraAmount,
+                totalAmount: data.totalAmount,
+                securityDeposit: Number(data.securityDeposit || 0),
+                shareToken,
+                createdByUserId: req.user?.id || null,
+            },
+        });
 
-        const result = await db.collection('Quotation').insertOne(quotationData);
-
-        // Fetch the full object with relations using Prisma for consistency
         const created = await prisma.quotation.findUnique({
-            where: { id: result.insertedId.toString() },
+            where: { id: result.id },
             include: {
                 vehicle: { include: { vehicleModel: { include: { brand: true } } } },
                 customer: true,
