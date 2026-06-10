@@ -350,6 +350,9 @@ model Quotation {
   dropoffDate DateTime @map("dropoff_date")
   rentalDays Float @map("rental_days")
   dailyRate  Float @map("daily_rate")
+  baseDailyRate Float? @map("base_daily_rate")
+  discountType  String? @map("discount_type") // PERCENT | AMOUNT
+  discountValue Float? @map("discount_value")
 
   baseAmount  Float @map("base_amount")
   extraChargesJson String @map("extra_charges_json") // JSON string [{description, amount}]
@@ -460,6 +463,9 @@ model Contract {
 
   // Financials
   appliedDailyRate   Float?
+  baseDailyRate      Float? @map("base_daily_rate")
+  discountType       String? @map("discount_type") // PERCENT | AMOUNT
+  discountValue      Float? @map("discount_value")
   securityDeposit    Float
   advancePaymentAmount Float?   @default(0)
   advancePaymentDate   DateTime?

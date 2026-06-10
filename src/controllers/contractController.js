@@ -102,6 +102,17 @@ const contractSchema = z.object({
         const n = Number(val);
         return Number.isFinite(n) ? n : undefined;
     }),
+    baseDailyRate: z.union([z.number(), z.string()]).optional().transform((val) => {
+        if (val === null || val === undefined || val === '') return undefined;
+        const n = Number(val);
+        return Number.isFinite(n) ? n : undefined;
+    }),
+    discountType: z.enum(['PERCENT', 'AMOUNT']).optional().nullable(),
+    discountValue: z.union([z.number(), z.string()]).optional().transform((val) => {
+        if (val === null || val === undefined || val === '') return undefined;
+        const n = Number(val);
+        return Number.isFinite(n) ? n : undefined;
+    }),
     securityDeposit: z.union([z.number(), z.string()]).transform((val) => Number(val) || 0),
     advancePaymentAmount: z.union([z.number(), z.string()]).optional().transform((val) => Number(val) || 0),
     advancePaymentDate: z.union([z.string(), z.date(), z.null()]).optional().transform((val) => val ? new Date(val) : undefined),
@@ -713,21 +724,6 @@ exports.updateContract = async (req, res) => {
                     where: { contractId: id, type: 'UPFRONT' },
                 });
                 if (invoice) {
-                    const damageCharge = Number(currentContract.damageCharge) || 0;
-                    const otherChargeAmount = Number(currentContract.otherChargeAmount) || 0;
-                    const lateExtrasTotal =
-                        (extraDayCharge || 0) +
-                        (extraTimeRemainderCharge || 0) +
-                        (extraKmCost || 0) +
-                        damageCharge +
-                        otherChargeAmount;
-
-                    const collectionChargeAmount =
-                        currentContract.isCollection || Number(currentContract.collectionCharge) > 0
-                            ? Number(currentContract.collectionCharge) || 0
-                            : 0;
-                    const extraChargesTotal = lateExtrasTotal + collectionChargeAmount;
-
                     const agg = await prisma.ledgerEntry.aggregate({
                         where: {
                             contractId: id,
@@ -753,20 +749,8 @@ exports.updateContract = async (req, res) => {
                         });
                     }
 
-                    if (extraChargesTotal > 0) {
-                        await prisma.ledgerEntry.create({
-                            data: {
-                                type: 'INCOME',
-                                amount: extraChargesTotal,
-                                currency: invoice.currency || 'LKR',
-                                description: `Late return extra charges income for ${currentContract.contractNo || ''}`.trim(),
-                                invoice: { connect: { id: invoice.id } },
-                                contract: { connect: { id } },
-                                customer: { connect: { id: currentContract.customerId } },
-                                vehicle: { connect: { id: contract.vehicleId } },
-                            },
-                        });
-                    }
+                    // Extra-charge rental income is recognized when the RETURN invoice is marked paid
+                    // (applyReturnSettlementInTx). Do not post INCOME here — that duplicated P&L.
                 }
             }
         }
