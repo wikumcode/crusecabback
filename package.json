@@ -10,7 +10,8 @@
     "postinstall": "prisma generate",
     "start": "node src/index.js",
     "fix:pl-duplicates": "node scripts/fix-duplicate-pl-income.js",
-    "fix:pl-duplicates:apply": "node scripts/fix-duplicate-pl-income.js --apply"
+    "fix:pl-duplicates:apply": "node scripts/fix-duplicate-pl-income.js --apply",
+    "migrate:discount-fields": "node scripts/migrate-discount-fields.js"
   },
   "keywords": [],
   "author": "",
