@@ -66,7 +66,11 @@ exports.createClient = async (req, res) => {
         // 4. Async Email
         try {
             if (client.email) {
-                sendWelcomeEmail(client.email, client.name || client.companyName || 'Valued Customer');
+                sendWelcomeEmail(
+                    client.email,
+                    client.name || client.companyName || 'Valued Customer',
+                    client.code
+                );
             }
         } catch (emailError) {
             console.error('Welcome email failed:', emailError.message);

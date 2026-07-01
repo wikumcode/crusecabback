@@ -2,9 +2,13 @@ const prisma = require('../lib/prisma');
 const { z } = require('zod');
 const jwt = require('jsonwebtoken');
 const { getNextSequenceValue } = require('../utils/sequence');
-const { sendTemplateEmail } = require('../services/email/email.service');
+const { sendInvoiceEmail, sendCreditNoteEmail } = require('../utils/email');
 const { DOCUMENT_PRINT_STYLES } = require('../lib/documentPrintStyles');
 const { formatDateTime } = require('../lib/dates');
+const {
+    resolveClientContact,
+    renderDocumentCustomerCardHtml,
+} = require('../lib/documentCustomerCard');
 
 const INVOICE_SEQ_KEY = 'invoice_sequence';
 const CREDIT_NOTE_SEQ_KEY = 'credit_note_sequence';
@@ -262,8 +266,10 @@ function renderInvoiceHtml(invoice, company = { name: '', address: '', logoUrl: 
         : '';
     const displayTotal = isReturn ? Math.abs(total) : total;
 
-    const customerName = invoice.customer?.name || invoice.customer?.email || '';
-    const customerEmail = invoice.customer?.email || '';
+    const customerCard = renderDocumentCustomerCardHtml(
+        resolveClientContact(invoice.customer),
+        escapeHtml
+    );
     const vehiclePlate = invoice.vehicle?.licensePlate || '';
     const brandName = invoice.vehicle?.vehicleModel?.brand?.name || '';
     const modelName = invoice.vehicle?.vehicleModel?.name || '';
@@ -329,11 +335,7 @@ function renderInvoiceHtml(invoice, company = { name: '', address: '', logoUrl: 
       ${settlementLabel ? `<div style="margin-bottom:16px;"><span class="doc-pill" style="background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-soft);">${escapeHtml(settlementLabel)}</span></div>` : ''}
 
       <div class="doc-cards">
-        <div class="doc-card">
-          <div class="doc-card-label">Customer</div>
-          <div class="doc-card-value">${escapeHtml(customerName)}</div>
-          <div class="doc-card-sub">${escapeHtml(customerEmail)}</div>
-        </div>
+        ${customerCard}
         <div class="doc-card">
           <div class="doc-card-label">Vehicle</div>
           <div class="doc-card-value">${escapeHtml(vehiclePlate)}</div>
@@ -1111,7 +1113,11 @@ exports.createCreditNote = async (req, res) => {
 
         const invoice = await prisma.invoice.findUnique({
             where: { id },
-            include: { creditNotes: true }
+            include: {
+                creditNotes: true,
+                customer: true,
+                contract: true,
+            }
         });
         if (!invoice) return res.status(404).json({ message: 'Invoice not found' });
         if (invoice.creditNotes?.length) {
@@ -1158,6 +1164,20 @@ exports.createCreditNote = async (req, res) => {
             return tx.creditNote.findUnique({ where: { id: cn.id } });
         }, TX_OPTS_INVOICE);
 
+        const fullInvoice = await prisma.invoice.findUnique({
+            where: { id },
+            include: { customer: true },
+        });
+
+        (async () => {
+            await sendCreditNoteEmail(fullInvoice?.customer, {
+                creditNoteNo: created.creditNoteNo,
+                referenceNo: fullInvoice?.invoiceNo,
+                amount: fullInvoice?.total,
+                reason: reason || '',
+            });
+        })();
+
         res.status(201).json(created);
     } catch (error) {
         console.error('Create Credit Note Error:', error);
@@ -1184,20 +1204,8 @@ exports.createUpfrontInvoiceForContract = async (req, res) => {
                 include: invoiceIncludeDetail
             });
             (async () => {
-                try {
-                    const customerEmail = invoice.customer?.email;
-                    if (!customerEmail) return;
-                    const invoiceLink = buildInvoiceShareLink(req, invoice.id);
-                    await sendTemplateEmail('INVOICE_SENT', customerEmail, {
-                        customer_name: invoice.customer?.name || invoice.customer?.email || '',
-                        invoice_no: invoice.invoiceNo,
-                        contract_no: invoice.contract?.contractNo || '',
-                        invoice_total: invoice.total,
-                        invoice_link: invoiceLink,
-                    });
-                } catch (e) {
-                    console.error('Failed to send upfront invoice email:', e?.message || e);
-                }
+                const invoiceLink = buildInvoiceShareLink(req, invoice.id);
+                await sendInvoiceEmail(invoice, invoiceLink, 'Upfront');
             })();
 
             const resObj = {
@@ -1234,20 +1242,8 @@ exports.createUpfrontInvoiceForContract = async (req, res) => {
         if (!invoice) throw new Error('Invoice creation failed — no invoice returned');
 
         (async () => {
-            try {
-                const customerEmail = invoice?.customer?.email;
-                if (!customerEmail) return;
-                const invoiceLink = buildInvoiceShareLink(req, invoice.id);
-                await sendTemplateEmail('INVOICE_SENT', customerEmail, {
-                    customer_name: invoice.customer?.name || invoice.customer?.email || '',
-                    invoice_no: invoice.invoiceNo,
-                    contract_no: invoice.contract?.contractNo || '',
-                    invoice_total: invoice.total,
-                    invoice_link: invoiceLink,
-                });
-            } catch (e) {
-                console.error('Failed to send upfront invoice email:', e?.message || e);
-            }
+            const invoiceLink = buildInvoiceShareLink(req, invoice.id);
+            await sendInvoiceEmail(invoice, invoiceLink, 'Upfront');
         })();
 
         const resObj = {
@@ -1330,20 +1326,8 @@ exports.createReturnInvoiceForContract = async (req, res) => {
             });
             // Send invoice link to customer (non-blocking).
             (async () => {
-                try {
-                    const customerEmail = invoice.customer?.email;
-                    if (!customerEmail) return;
-                    const invoiceLink = buildInvoiceShareLink(req, invoice.id);
-                    await sendTemplateEmail('INVOICE_SENT', customerEmail, {
-                        customer_name: invoice.customer?.name || invoice.customer?.email || '',
-                        invoice_no: invoice.invoiceNo,
-                        contract_no: invoice.contract?.contractNo || '',
-                        invoice_total: invoice.total,
-                        invoice_link: invoiceLink,
-                    });
-                } catch (e) {
-                    console.error('Failed to send return invoice email:', e?.message || e);
-                }
+                const invoiceLink = buildInvoiceShareLink(req, invoice.id);
+                await sendInvoiceEmail(invoice, invoiceLink, 'Return');
             })();
 
             const resObj = {
@@ -1500,22 +1484,9 @@ exports.createReturnInvoiceForContract = async (req, res) => {
         });
 
 
-        // Send return invoice link to the customer email (non-blocking).
         (async () => {
-            try {
-                const customerEmail = invoice.customer?.email;
-                if (!customerEmail) return;
-                const invoiceLink = buildInvoiceShareLink(req, invoice.id);
-                await sendTemplateEmail('INVOICE_SENT', customerEmail, {
-                    customer_name: invoice.customer?.name || invoice.customer?.email || '',
-                    invoice_no: invoice.invoiceNo,
-                    contract_no: invoice.contract?.contractNo || '',
-                    invoice_total: invoice.total,
-                    invoice_link: invoiceLink,
-                });
-            } catch (e) {
-                console.error('Failed to send return invoice email:', e?.message || e);
-            }
+            const invoiceLink = buildInvoiceShareLink(req, invoice.id);
+            await sendInvoiceEmail(invoice, invoiceLink, 'Return');
         })();
 
         const resObj = {

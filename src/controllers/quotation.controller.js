@@ -5,6 +5,10 @@ const jwt = require('jsonwebtoken');
 const { z } = require('zod');
 const { DOCUMENT_PRINT_STYLES } = require('../lib/documentPrintStyles');
 const { formatDateTime: formatDateTimeShared } = require('../lib/dates');
+const {
+    resolveQuotationCustomerContact,
+    renderDocumentCustomerCardHtml,
+} = require('../lib/documentCustomerCard');
 
 const QUOTATION_SHARE_TOKEN_TTL = '30d';
 const SHARE_TOKEN_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'; // no ambiguous 0/O/1/l
@@ -106,6 +110,45 @@ function escapeHtml(str) {
         .replace(/'/g, '&#039;');
 }
 
+function formatQuotationVehicleDisplay(vehicle) {
+    if (!vehicle) return { title: '—', subtitle: '' };
+    const brand = vehicle?.vehicleModel?.brand?.name || '';
+    const model = vehicle?.vehicleModel?.name || '';
+    const title = `${brand} ${model}`.trim() || 'Vehicle';
+    const category = vehicle?.fleetCategory?.name || '';
+    return { title, subtitle: category };
+}
+
+function resolveQuotationMileageTerms(quotation) {
+    const dailyAllocatedKm =
+        quotation.dailyAllocatedKm ??
+        quotation.vehicle?.dailyAllocatedKm ??
+        null;
+    const extraKmCharge =
+        quotation.extraKmCharge ??
+        quotation.vehicle?.extraKmCharge ??
+        null;
+    return { dailyAllocatedKm, extraKmCharge };
+}
+
+function renderMileageTermsHtml(quotation) {
+    const { dailyAllocatedKm, extraKmCharge } = resolveQuotationMileageTerms(quotation);
+    if (dailyAllocatedKm == null && extraKmCharge == null) return '';
+    const kmLine = dailyAllocatedKm != null
+        ? `${Number(dailyAllocatedKm).toLocaleString()} km/day included`
+        : '';
+    const chargeLine = extraKmCharge != null
+        ? `LKR ${Number(extraKmCharge).toLocaleString()} per extra km`
+        : '';
+    const subtitle = [kmLine, chargeLine].filter(Boolean).join(' · ');
+    if (!subtitle) return '';
+    return `
+      <div class="doc-card" style="margin-bottom:16px;">
+        <div class="doc-card-label">Mileage terms</div>
+        <div class="doc-card-value" style="font-size:15px;">${escapeHtml(subtitle)}</div>
+      </div>`;
+}
+
 /**
  * Day-first date + 24h time, e.g. `09/05/2026 20:26`. Mirrors
  * `front/src/lib/dates.js#formatDateTime` so the customer sees an identical
@@ -148,7 +191,12 @@ function renderSharedQuotationHtml(quotation, company, baseUrl) {
     })();
 
     const vehicle = quotation.vehicle;
-    const vehLabel = `${vehicle?.vehicleModel?.brand?.name || ''} ${vehicle?.vehicleModel?.name || ''}`.trim();
+    const vehDisplay = formatQuotationVehicleDisplay(vehicle);
+    const customerCard = renderDocumentCustomerCardHtml(
+        resolveQuotationCustomerContact(quotation),
+        escapeHtml
+    );
+    const mileageHtml = renderMileageTermsHtml(quotation);
     const issueDate = new Date(quotation.issueDate);
     const validUntil = new Date(quotation.validUntil);
     const logoResolved = resolveLogoUrl(company.logoUrl, baseUrl);
@@ -210,18 +258,15 @@ function renderSharedQuotationHtml(quotation, company, baseUrl) {
       </div>
 
       <div class="doc-cards">
-        <div class="doc-card">
-          <div class="doc-card-label">Customer</div>
-          <div class="doc-card-value">${escapeHtml(quotation.customerName || '')}</div>
-          <div class="doc-card-sub">${escapeHtml(quotation.customerEmail || '—')}</div>
-          <div class="doc-chip-row" style="margin-top:10px;"><span class="doc-chip">${escapeHtml(quotation.customerType || '')}</span></div>
-        </div>
+        ${customerCard}
         <div class="doc-card">
           <div class="doc-card-label">Vehicle</div>
-          <div class="doc-card-value">${escapeHtml(vehicle?.licensePlate || '')}</div>
-          <div class="doc-card-sub">${escapeHtml(vehLabel)}</div>
+          <div class="doc-card-value">${escapeHtml(vehDisplay.title)}</div>
+          <div class="doc-card-sub">${escapeHtml(vehDisplay.subtitle || 'Subject to fleet availability')}</div>
         </div>
       </div>
+
+      ${mileageHtml}
 
       <div class="doc-card" style="margin-bottom:16px;background:#fff;border-style:dashed;">
         <div class="doc-card-label">Rental period</div>
@@ -261,7 +306,9 @@ const createQuotationSchema = z.object({
     customerMode: z.enum(['EXISTING', 'NEW']),
     customerId: z.string().optional().nullable(),
     customerName: z.string().min(1),
-    customerEmail: z.string().email().optional().nullable(),
+    customerEmail: z.preprocess((val) => (val === '' ? null : val), z.string().email().optional().nullable()),
+    customerPhone: z.preprocess((val) => (val === '' ? null : val), z.string().optional().nullable()),
+    customerAddress: z.preprocess((val) => (val === '' ? null : val), z.string().optional().nullable()),
     customerType: z.enum(['LOCAL', 'FOREIGN', 'CORPORATE']),
     vehicleId: z.string().min(1),
     pickupDate: z.string().min(1),
@@ -281,6 +328,8 @@ const createQuotationSchema = z.object({
     /// Refundable security deposit. Included in totalAmount so the customer sees the up-front amount,
     /// but tracked separately so it can be excluded from revenue / P&L downstream (quotations themselves do not hit P&L).
     securityDeposit: z.number().nonnegative().optional().default(0),
+    dailyAllocatedKm: z.coerce.number().int().nonnegative().optional().nullable(),
+    extraKmCharge: z.coerce.number().nonnegative().optional().nullable(),
 });
 
 function buildQuotationNo(sequence, date = new Date()) {
@@ -359,6 +408,8 @@ exports.createQuotation = async (req, res) => {
                 customerId: data.customerMode === 'EXISTING' && data.customerId ? data.customerId : null,
                 customerName: data.customerName,
                 customerEmail: data.customerEmail || null,
+                customerPhone: data.customerPhone || null,
+                customerAddress: data.customerAddress || null,
                 customerType: data.customerType,
                 vehicleId: data.vehicleId,
                 pickupDate,
@@ -373,6 +424,8 @@ exports.createQuotation = async (req, res) => {
                 extraAmount: data.extraAmount,
                 totalAmount: data.totalAmount,
                 securityDeposit: Number(data.securityDeposit || 0),
+                dailyAllocatedKm: data.dailyAllocatedKm ?? null,
+                extraKmCharge: data.extraKmCharge ?? null,
                 shareToken,
                 createdByUserId: req.user?.id || null,
             },
@@ -381,7 +434,7 @@ exports.createQuotation = async (req, res) => {
         const created = await prisma.quotation.findUnique({
             where: { id: result.id },
             include: {
-                vehicle: { include: { vehicleModel: { include: { brand: true } } } },
+                vehicle: { include: { vehicleModel: { include: { brand: true } }, fleetCategory: true } },
                 customer: true,
             },
         });
@@ -418,7 +471,7 @@ exports.listQuotations = async (req, res) => {
             prisma.quotation.findMany({
                 where,
                 include: {
-                    vehicle: { include: { vehicleModel: { include: { brand: true } } } },
+                    vehicle: { include: { vehicleModel: { include: { brand: true } }, fleetCategory: true } },
                     customer: true,
                 },
                 orderBy: { createdAt: 'desc' },
@@ -461,7 +514,7 @@ exports.getQuotation = async (req, res) => {
         const row = await prisma.quotation.findUnique({
             where: { id },
             include: {
-                vehicle: { include: { vehicleModel: { include: { brand: true } } } },
+                vehicle: { include: { vehicleModel: { include: { brand: true } }, fleetCategory: true } },
                 customer: true,
             },
         });
@@ -482,7 +535,7 @@ exports.getQuotation = async (req, res) => {
 };
 
 const sharedQuotationInclude = {
-    vehicle: { include: { vehicleModel: { include: { brand: true } } } },
+    vehicle: { include: { vehicleModel: { include: { brand: true } }, fleetCategory: true } },
     customer: true,
 };
 

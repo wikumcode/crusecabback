@@ -11,7 +11,9 @@
     "start": "node src/index.js",
     "fix:pl-duplicates": "node scripts/fix-duplicate-pl-income.js",
     "fix:pl-duplicates:apply": "node scripts/fix-duplicate-pl-income.js --apply",
-    "migrate:discount-fields": "node scripts/migrate-discount-fields.js"
+    "migrate:discount-fields": "node scripts/migrate-discount-fields.js",
+    "migrate:quotation-contact-km": "node scripts/migrate-quotation-contact-km.js",
+    "setup:local-db": "node scripts/setup-cruisecabs-local-db.js"
   },
   "keywords": [],
   "author": "",

@@ -75,37 +75,47 @@ async function persistVehicleImages(rest, licensePlate) {
     return out;
 }
 
+const emptyToUndefined = (val) => (val === '' || val == null ? undefined : val);
+const emptyToNull = (val) => (val === '' || val == null ? null : val);
+const optionalString = () => z.preprocess(emptyToUndefined, z.string().optional());
+const optionalDate = () => z.preprocess(
+    emptyToUndefined,
+    z.union([z.string(), z.date()]).optional().transform((value) => (value ? new Date(value) : undefined))
+);
+const optionalNullableDate = () => z.preprocess(
+    emptyToNull,
+    z.union([z.string(), z.date()]).optional().nullable().transform((value) => (value ? new Date(value) : null))
+);
+
 const vehicleBaseSchema = z.object({
-    modelId: z.preprocess((val) => (val === '' ? null : val), z.string().nullable().optional()), // Links to VehicleModel
-    fleetCategoryId: z.preprocess((val) => (val === '' ? null : val), z.string().nullable().optional()),
-    year: z.number().int().min(1900),
+    modelId: z.preprocess(emptyToNull, z.string().nullable().optional()), // Links to VehicleModel
+    fleetCategoryId: z.preprocess(emptyToNull, z.string().nullable().optional()),
+    year: z.coerce.number().int().min(1900),
     licensePlate: z.string().min(1),
-    vin: z.string().optional(),
+    vin: z.preprocess(emptyToUndefined, z.string().optional()),
     color: z.string().min(1),
     fuelType: z.string(),
     transmission: z.string(),
 
-    // New Fields
-    lastOdometer: z.number().int().optional(),
-    licenseRenewalDate: z.preprocess((val) => (val === '' ? undefined : val), z.string().optional().transform((str) => str ? new Date(str) : undefined)),
-    insuranceRenewalDate: z.preprocess((val) => (val === '' ? undefined : val), z.string().optional().transform((str) => str ? new Date(str) : undefined)),
-    financeInstallmentDate: z.preprocess((val) => (val === '' ? undefined : val), z.string().optional().transform((str) => str ? new Date(str) : undefined)),
+    lastOdometer: z.coerce.number().int().optional(),
+    licenseRenewalDate: optionalDate(),
+    insuranceRenewalDate: optionalDate(),
+    financeInstallmentDate: optionalDate(),
 
     status: z.string().optional(),
-    imageUrl: z.string().optional(),
-    licenseFrontUrl: z.string().optional(),
-    licenseBackUrl: z.string().optional(),
-    insuranceFrontUrl: z.string().optional(),
-    insuranceBackUrl: z.string().optional(),
-    additionalImages: z.string().optional(),
-    features: z.string().optional(),
-    ownership: z.enum(['COMPANY', 'THIRD_PARTY']).optional().default('COMPANY'), // COMPANY, THIRD_PARTY
+    imageUrl: optionalString(),
+    licenseFrontUrl: optionalString(),
+    licenseBackUrl: optionalString(),
+    insuranceFrontUrl: optionalString(),
+    insuranceBackUrl: optionalString(),
+    additionalImages: optionalString(),
+    features: optionalString(),
+    ownership: z.enum(['COMPANY', 'THIRD_PARTY']).optional().default('COMPANY'),
     rentalType: z.enum(['SHORT_TERM', 'LONG_TERM']).optional().default('SHORT_TERM'),
-    vendorId: z.preprocess((val) => (val === '' ? null : val), z.string().nullable().optional()),
-    contractStartDate: z.preprocess((val) => (val === '' ? null : val), z.string().optional().nullable().transform((str) => str ? new Date(str) : null)),
-    contractEndDate: z.preprocess((val) => (val === '' ? null : val), z.string().optional().nullable().transform((str) => str ? new Date(str) : null)),
+    vendorId: z.preprocess(emptyToNull, z.string().nullable().optional()),
+    contractStartDate: optionalNullableDate(),
+    contractEndDate: optionalNullableDate(),
 
-    // Financial Config
     dailyRentalRate: z.union([z.number(), z.string()]).transform((val) => Number(val) || 0).optional(),
     foreignDailyRentalRate: z.union([z.number(), z.string()]).transform((val) => Number(val) || 0).optional(),
     bookingFee: z.union([z.number(), z.string()]).transform((val) => Number(val) || 0).optional(),
@@ -164,10 +174,15 @@ exports.createVehicle = async (req, res) => {
             });
         }
 
-        // Handle Prisma unique constraint errors
         if (error.code === 'P2002') {
             const field = error.meta?.target?.[0] || 'field';
             return res.status(400).json({ message: `A vehicle with this ${field} already exists.` });
+        }
+
+        if (error.code === 'P2003') {
+            return res.status(400).json({
+                message: 'Invalid brand model, fleet category, or vendor selection. Please refresh and try again.'
+            });
         }
 
         console.error("Create Vehicle Error:", error);

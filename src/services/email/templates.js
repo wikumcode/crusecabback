@@ -6,55 +6,114 @@ function renderTemplateString(template, variables = {}) {
   });
 }
 
+const wrap = (body) => `
+  <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color:#0f172a;">
+    ${body}
+    <br />
+    <p style="color:#64748b;font-size:13px;">Best regards,<br /><b>{company_name}</b></p>
+  </div>`;
+
 const templates = {
-  // Customer registration welcome email
   WELCOME: {
-    subject: 'Welcome to Cruiser Cabs',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Welcome to Cruiser Cabs, {customer_name}!</h2>
-        <p>Thank you for registering with Cruiser Cabs.</p>
-        <p>We look forward to serving you and providing you with an ultimate travel experience.</p>
-        <br />
-        <p>Best regards,<br />The Cruiser Cabs Team</p>
-      </div>
-    `
+    subject: 'Welcome to {company_name}',
+    html: wrap(`
+      <h2>Welcome, {customer_name}!</h2>
+      <p>Thank you for registering with <b>{company_name}</b>.</p>
+      <p>Your customer profile has been created successfully. We look forward to serving you.</p>
+      <p><b>Customer code:</b> {customer_code}</p>
+    `),
   },
 
-  // Future: booking confirmation email
-  BOOKING_CONFIRMATION: {
-    subject: 'Booking Confirmation - {booking_reference}',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Booking confirmed!</h2>
-        <p>Booking Ref: <b>{booking_reference}</b></p>
-        <p>Date/Time: {booking_datetime}</p>
-        <p>Customer: {customer_name}</p>
-      </div>
-    `
+  VENDOR_WELCOME: {
+    subject: 'Vendor account created — {company_name}',
+    html: wrap(`
+      <h2>Welcome, {vendor_name}!</h2>
+      <p>Your vendor account with <b>{company_name}</b> has been created.</p>
+      <p><b>Vendor code:</b> {vendor_code}</p>
+      <p><b>Login email:</b> {vendor_email}</p>
+      {password_block}
+      <p>Please sign in to the vendor portal and keep your login details secure.</p>
+    `),
   },
 
-  // Future: invoice email
+  CONTRACT_CREATED: {
+    subject: 'Rental contract {contract_no} — {company_name}',
+    html: wrap(`
+      <h2>Your rental contract is confirmed</h2>
+      <p>Hello {customer_name},</p>
+      <p>We have created your rental contract with the details below.</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
+        <tr><td style="padding:6px 0;color:#64748b;">Contract no</td><td style="padding:6px 0;"><b>{contract_no}</b></td></tr>
+        <tr><td style="padding:6px 0;color:#64748b;">Vehicle</td><td style="padding:6px 0;">{vehicle_label}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b;">Pick-up</td><td style="padding:6px 0;">{pickup_datetime}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b;">Drop-off</td><td style="padding:6px 0;">{dropoff_datetime}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b;">Daily rate</td><td style="padding:6px 0;">LKR {daily_rate}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b;">Advance payment</td><td style="padding:6px 0;">LKR {advance_amount}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b;">Allocated km</td><td style="padding:6px 0;">{allocated_km} km</td></tr>
+      </table>
+      <p>If you have any questions, reply to this email or contact us.</p>
+    `),
+  },
+
+  ADVANCE_RECEIPT_SENT: {
+    subject: 'Advance receipt {receipt_no} — {contract_no}',
+    html: wrap(`
+      <h2>Advance payment received</h2>
+      <p>Hello {customer_name},</p>
+      <p>Thank you. We have recorded your advance payment.</p>
+      <p><b>Receipt no:</b> {receipt_no}<br/>
+      <b>Contract no:</b> {contract_no}<br/>
+      <b>Amount:</b> LKR {receipt_amount}</p>
+      {receipt_link_block}
+    `),
+  },
+
   INVOICE_SENT: {
-    subject: 'Invoice {invoice_no} - {contract_no}',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Invoice issued</h2>
-        <p>Invoice No: <b>{invoice_no}</b></p>
-        <p>Contract No: <b>{contract_no}</b></p>
-        <p>Total Amount: {invoice_total}</p>
-        <p style="margin-top:16px;">
-          <a href="{invoice_link}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:700;">
-            View Invoice
-          </a>
-        </p>
-        <p style="font-size:12px;color:#666;margin-top:16px;">
-          If the button does not work, copy this link into your browser:<br/>
-          <span style="word-break:break-all;">{invoice_link}</span>
-        </p>
-      </div>
-    `
-  }
+    subject: '{invoice_type} invoice {invoice_no} — {contract_no}',
+    html: wrap(`
+      <h2>{invoice_type} invoice issued</h2>
+      <p>Hello {customer_name},</p>
+      <p>Please find your <b>{invoice_type}</b> invoice details below.</p>
+      <p><b>Invoice no:</b> {invoice_no}<br/>
+      <b>Contract no:</b> {contract_no}<br/>
+      <b>Total amount:</b> LKR {invoice_total}</p>
+      {invoice_link_block}
+    `),
+  },
+
+  CREDIT_NOTE_ISSUED: {
+    subject: 'Credit note {credit_note_no} — {reference_no}',
+    html: wrap(`
+      <h2>Credit note issued</h2>
+      <p>Hello {customer_name},</p>
+      <p>A credit note has been issued on your account.</p>
+      <p><b>Credit note no:</b> {credit_note_no}<br/>
+      <b>Related document:</b> {reference_no}<br/>
+      <b>Amount:</b> LKR {credit_amount}</p>
+      {reason_block}
+    `),
+  },
+
+  CONTRACT_THANK_YOU: {
+    subject: 'Thank you — contract {contract_no} completed',
+    html: wrap(`
+      <h2>Thank you for renting with us!</h2>
+      <p>Hello {customer_name},</p>
+      <p>Your rental contract <b>{contract_no}</b> has been completed.</p>
+      <p>We appreciate your business and hope you enjoyed your experience with <b>{company_name}</b>.</p>
+      <p>We look forward to serving you again soon.</p>
+    `),
+  },
+
+  BOOKING_CONFIRMATION: {
+    subject: 'Booking confirmation — {booking_reference}',
+    html: wrap(`
+      <h2>Booking confirmed</h2>
+      <p>Booking ref: <b>{booking_reference}</b></p>
+      <p>Date/Time: {booking_datetime}</p>
+      <p>Customer: {customer_name}</p>
+    `),
+  },
 };
 
 function getTemplate(templateKey) {
@@ -67,7 +126,7 @@ function renderTemplate(templateKey, variables) {
   if (!tpl) throw new Error(`Email template not found: ${templateKey}`);
   return {
     subject: renderTemplateString(tpl.subject, variables),
-    html: renderTemplateString(tpl.html, variables)
+    html: renderTemplateString(tpl.html, variables),
   };
 }
 
@@ -75,6 +134,5 @@ module.exports = {
   renderTemplateString,
   templates,
   getTemplate,
-  renderTemplate
+  renderTemplate,
 };
-

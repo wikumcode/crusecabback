@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { z } = require('zod');
 const { getNextSequenceValue } = require('../utils/sequence');
+const { sendContractCreatedEmail, sendContractThankYouEmail } = require('../utils/email');
 
 /**
  * Mongo Atlas cold-start latency easily blows past Prisma's default 5s
@@ -301,6 +302,10 @@ exports.createContract = async (req, res) => {
                 city: { include: { district: true } },
             },
         });
+
+        (async () => {
+            await sendContractCreatedEmail(created);
+        })();
 
         res.status(201).json(created);
     } catch (error) {
@@ -763,6 +768,13 @@ exports.updateContract = async (req, res) => {
                 vehicleExchanges: { include: { newVehicle: true, oldVehicle: true } },
             }
         });
+
+        if (status === 'COMPLETED' && previousStatus !== 'COMPLETED') {
+            (async () => {
+                await sendContractThankYouEmail(finalContract);
+            })();
+        }
+
         res.json(finalContract);
     } catch (error) {
         console.error("Update Contract Error:", error);

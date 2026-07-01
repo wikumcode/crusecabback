@@ -5,6 +5,11 @@ const { getNextSequenceValue } = require('../utils/sequence');
 const invoiceCtrl = require('./invoice.controller');
 const { DOCUMENT_PRINT_STYLES } = require('../lib/documentPrintStyles');
 const { formatDate, formatDateTime } = require('../lib/dates');
+const {
+    resolveClientContact,
+    renderDocumentCustomerCardHtml,
+} = require('../lib/documentCustomerCard');
+const { sendAdvanceReceiptEmail, sendCreditNoteEmail } = require('../utils/email');
 
 const AR_SHARE_TTL = '7d';
 
@@ -82,15 +87,19 @@ function resolveLogoUrl(logoUrl, baseUrl) {
     return `${baseUrl}${logoUrl.startsWith('/') ? '' : '/'}${logoUrl}`;
 }
 
+function renderReceiptCustomerCard(receipt, escapeHtml) {
+    return renderDocumentCustomerCardHtml(
+        resolveClientContact(receipt.contract?.customer),
+        escapeHtml
+    );
+}
+
 /**
  * Same visual system as shared quotations: DOCUMENT_PRINT_STYLES, orange accent bar, cards, table + tfoot.
  */
 function renderAdvanceReceiptHtml(receipt, company = {}, baseUrl = '') {
     const escapeHtml = invoiceCtrl.escapeHtml;
-    const customer = receipt.contract?.customer;
-    const customerName = customer?.name || customer?.email || '';
-    const customerEmail = customer?.email || '';
-    const customerType = String(customer?.type || '').trim();
+    const customerCard = renderReceiptCustomerCard(receipt, escapeHtml);
     const vehiclePlate = receipt.contract?.vehicle?.licensePlate || '';
     const brandName = receipt.contract?.vehicle?.vehicleModel?.brand?.name || '';
     const modelName = receipt.contract?.vehicle?.vehicleModel?.name || '';
@@ -125,10 +134,6 @@ function renderAdvanceReceiptHtml(receipt, company = {}, baseUrl = '') {
     const chipRow = chips.length ? `<div class="doc-chip-row">${chips.join('')}</div>` : '';
     const brandSection = showBrand
         ? `<div class="doc-brand-row">${logoImg}<div>${nameBlock}${addrBlock}${chipRow}</div></div>`
-        : '';
-
-    const typeChipRow = customerType
-        ? `<div class="doc-chip-row" style="margin-top:10px;"><span class="doc-chip">${escapeHtml(customerType)}</span></div>`
         : '';
 
     const descBody = paymentDateStr
@@ -167,12 +172,7 @@ function renderAdvanceReceiptHtml(receipt, company = {}, baseUrl = '') {
       </div>
 
       <div class="doc-cards">
-        <div class="doc-card">
-          <div class="doc-card-label">Customer</div>
-          <div class="doc-card-value">${escapeHtml(customerName)}</div>
-          <div class="doc-card-sub">${escapeHtml(customerEmail || '—')}</div>
-          ${typeChipRow}
-        </div>
+        ${customerCard}
         <div class="doc-card">
           <div class="doc-card-label">Vehicle</div>
           <div class="doc-card-value">${escapeHtml(vehiclePlate)}</div>
@@ -212,9 +212,7 @@ function renderAdvanceReceiptHtml(receipt, company = {}, baseUrl = '') {
 
 function renderAdvanceReversalPreviewHtml(receipt, company = {}, baseUrl = '', provisionalNoLabel) {
     const escapeHtml = invoiceCtrl.escapeHtml;
-    const customer = receipt.contract?.customer;
-    const customerName = customer?.name || customer?.email || '';
-    const customerEmail = customer?.email || '';
+    const customerCard = renderReceiptCustomerCard(receipt, escapeHtml);
     const vehiclePlate = receipt.contract?.vehicle?.licensePlate || '';
     const brandName = receipt.contract?.vehicle?.vehicleModel?.brand?.name || '';
     const modelName = receipt.contract?.vehicle?.vehicleModel?.name || '';
@@ -261,11 +259,7 @@ function renderAdvanceReversalPreviewHtml(receipt, company = {}, baseUrl = '', p
       </div>
 
       <div class="doc-cards">
-        <div class="doc-card">
-          <div class="doc-card-label">Customer</div>
-          <div class="doc-card-value">${escapeHtml(customerName)}</div>
-          <div class="doc-card-sub">${escapeHtml(customerEmail || '—')}</div>
-        </div>
+        ${customerCard}
         <div class="doc-card">
           <div class="doc-card-label">Vehicle</div>
           <div class="doc-card-value">${escapeHtml(vehiclePlate)}</div>
@@ -303,9 +297,7 @@ function renderAdvanceReversalPreviewHtml(receipt, company = {}, baseUrl = '', p
 
 function renderAdvanceReversalIssuedHtml(reversal, receipt, company = {}, baseUrl = '') {
     const escapeHtml = invoiceCtrl.escapeHtml;
-    const customer = receipt.contract?.customer;
-    const customerName = customer?.name || customer?.email || '';
-    const customerEmail = customer?.email || '';
+    const customerCard = renderReceiptCustomerCard(receipt, escapeHtml);
     const vehiclePlate = receipt.contract?.vehicle?.licensePlate || '';
     const brandName = receipt.contract?.vehicle?.vehicleModel?.brand?.name || '';
     const modelName = receipt.contract?.vehicle?.vehicleModel?.name || '';
@@ -354,11 +346,7 @@ function renderAdvanceReversalIssuedHtml(reversal, receipt, company = {}, baseUr
       </div>
 
       <div class="doc-cards">
-        <div class="doc-card">
-          <div class="doc-card-label">Customer</div>
-          <div class="doc-card-value">${escapeHtml(customerName)}</div>
-          <div class="doc-card-sub">${escapeHtml(customerEmail || '—')}</div>
-        </div>
+        ${customerCard}
         <div class="doc-card">
           <div class="doc-card-label">Vehicle</div>
           <div class="doc-card-value">${escapeHtml(vehiclePlate)}</div>
@@ -543,6 +531,11 @@ exports.issueAdvanceReceipt = async (req, res) => {
         });
 
         const shareUrl = buildAdvanceReceiptShareLink(req, receipt.id);
+
+        (async () => {
+            await sendAdvanceReceiptEmail(receipt, shareUrl);
+        })();
+
         res.status(201).json({ ...receipt, shareUrl });
     } catch (error) {
         console.error('Issue advance receipt error:', error);
@@ -773,6 +766,15 @@ exports.reverseAdvanceReceipt = async (req, res) => {
             where: { id: receipt.id },
             include: receiptInclude,
         });
+
+        (async () => {
+            await sendCreditNoteEmail(fullReceipt?.contract?.customer, {
+                creditNoteNo: fullReversal.rarNo,
+                referenceNo: fullReceipt.receiptNo,
+                amount: fullReversal.amount,
+                reason: reason || 'Advance receipt reversal',
+            });
+        })();
 
         res.status(201).json({ reversal: fullReversal, receipt: fullReceipt });
     } catch (error) {

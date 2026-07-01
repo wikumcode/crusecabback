@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const bcrypt = require('bcryptjs');
+const { sendVendorWelcomeEmail } = require('../utils/email');
 
 // Get all vendors (Role = VENDOR)
 exports.getVendors = async (req, res) => {
@@ -73,6 +74,7 @@ exports.createVendor = async (req, res) => {
         if (!password) {
             password = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8);
         }
+        const plainPassword = password;
 
         const hashedPassword = await bcrypt.hash(password, 10);
         const vendorCode = await generateVendorCode();
@@ -100,6 +102,14 @@ exports.createVendor = async (req, res) => {
                 },
             },
         });
+
+        (async () => {
+            await sendVendorWelcomeEmail(email, {
+                name,
+                vendorCode,
+                temporaryPassword: req.body.password ? undefined : plainPassword,
+            });
+        })();
 
         res.status(201).json({
             message: 'Vendor created successfully',
